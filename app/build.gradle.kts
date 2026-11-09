@@ -67,6 +67,9 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  // Exported Room schemas are packaged into debug assets only, so the Robolectric MigrationTestHelper
+  // can build historical database versions (v3, v4) and check every migration against the real v5 schema.
+  sourceSets { getByName("debug").assets.srcDir("$projectDir/schemas") }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -140,6 +143,7 @@ dependencies {
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
+  testImplementation(libs.androidx.room.testing)
   // Screenshot and GIF capture of real screens on the JVM (roadmap Phase 1).
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)

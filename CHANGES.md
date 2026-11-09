@@ -87,6 +87,19 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
 - **Docs:** handoff packet fixed (app ID, component path) and gained the no-fabrication, consent and
   data-sufficiency invariants.
 
+## Phase 2b — database upgrade safety
+- **Room 2.8.5 everywhere.** Runtime, KTX and compiler now share one version ref (Dependabot had
+  started splitting them; PR #6 is superseded). `room-testing` added for migration tests.
+- **Schemas committed** in `app/schemas/`: `5.json` is Room's export; `3.json` and `4.json` are the
+  earlier shapes, derived from it and checked against the original v3 entity definitions.
+- **Migration tests** (`MigrationTest`): a database created at v3 with a subject and an artifact is
+  upgraded to v4 and to v5, validated column by column against the schema, and then opened with the
+  real `AegisDatabase`. It checks:
+  - rows survive and get the documented defaults (`UNVERIFIED`, `UNKNOWN (pre-v4)`);
+  - legacy artifacts get empty custody fields rather than invented ones;
+  - the audit-log triggers are installed by the migration;
+  - erasure and the audit chain work on the upgraded file.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only
