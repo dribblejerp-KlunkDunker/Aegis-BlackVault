@@ -150,18 +150,30 @@ fun PsychometricScreen(
                             TraitProgressRow("Affective Emotional Tone", lp.emotionalToneIndex, RustAccent)
 
                             // Function-Word Pronoun & Certainty Ratios
-                            Row(
+                            // Two rows so the five ratios fit at phone width (one row overflowed and
+                            // wrapped "Hedge" one character per line).
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(ObsidianBg, RoundedCornerShape(4.dp))
                                     .padding(6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text("I-Focus: ${lp.iPronounRatePct}%", color = TextPrimary, fontSize = 10.sp)
-                                Text("We-Focus: ${lp.wePronounRatePct}%", color = PhosphorGreen, fontSize = 10.sp)
-                                Text("You-Direct: ${lp.youPronounRatePct}%", color = AmberSignal, fontSize = 10.sp)
-                                Text("Cert: ${lp.certaintyMarkerPct}%", color = CyanTelemetry, fontSize = 10.sp)
-                                Text("Hedge: ${lp.hedgingMarkerPct}%", color = AlarmRed, fontSize = 10.sp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("I-Focus: ${lp.iPronounRatePct}%", color = TextPrimary, fontSize = 10.sp, maxLines = 1)
+                                    Text("We-Focus: ${lp.wePronounRatePct}%", color = PhosphorGreen, fontSize = 10.sp, maxLines = 1)
+                                    Text("You-Direct: ${lp.youPronounRatePct}%", color = AmberSignal, fontSize = 10.sp, maxLines = 1)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Text("Cert: ${lp.certaintyMarkerPct}%", color = CyanTelemetry, fontSize = 10.sp, maxLines = 1)
+                                    Text("Hedge: ${lp.hedgingMarkerPct}%", color = AlarmRed, fontSize = 10.sp, maxLines = 1)
+                                }
                             }
                         }
                     }
