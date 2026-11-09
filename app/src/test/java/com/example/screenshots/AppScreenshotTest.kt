@@ -106,7 +106,17 @@ class AppScreenshotTest {
     fun chromebook_governance_tab() = captureGovernance("chromebook")
 
     /** Project bar, the new-project dialog, and the empty state a new project opens to. */
-    private fun captureProjects(prefix: String) {
+    private fun captureProjects(prefix: String) = try {
+        captureProjectsInner(prefix)
+    } finally {
+        // The active project is remembered in settings and the database outlives this test, so put
+        // the default project back; otherwise later tests open in the new, empty project.
+        androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getSharedPreferences("aegis_settings", android.content.Context.MODE_PRIVATE)
+            .edit().putString("active_project_id", com.example.model.ProjectEntity.DEFAULT_ID).commit()
+    }
+
+    private fun captureProjectsInner(prefix: String) {
         waitForSeedData()
         composeTestRule.onNodeWithTag("project_menu_btn", useUnmergedTree = true).performClick()
         settle()
