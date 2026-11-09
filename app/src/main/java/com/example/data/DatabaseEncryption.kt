@@ -131,26 +131,33 @@ object DatabaseEncryption {
     /**
      * Writes an encrypted copy next to [dbFile], verifies it, then swaps it in.
      * The plaintext original is only removed after the encrypted copy is in place.
+     *
+     * The copy is done statement by statement (schema from sqlite_master, then rows, then triggers)
+     * rather than with ATTACH + sqlcipher_export, whose attachment did not survive across statements
+     * in SQLCipher for Android's connection pool. Reading uses the platform SQLite, which also folds in
+     * any pending WAL content.
      */
     fun encryptInPlace(dbFile: File, passphrase: ByteArray) {
         loadNativeLibrary()
         val tmp = File(dbFile.path + ENCRYPTING_SUFFIX)
         tmp.delete()
+        sidecars(tmp).forEach { it.delete() }
 
+        val plain = android.database.sqlite.SQLiteDatabase.openDatabase(
+            dbFile.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+        )
         val expected: Map<String, Long>
         val userVersion: Int
-        val plain = SQLiteDatabase.openDatabase(dbFile.path, "", null, SQLiteDatabase.OPEN_READWRITE, null, null)
         try {
-            // ATTACH is per connection. In WAL mode the pool may run the next statement on another
-            // connection that never saw the attachment, so drop to a single connection first
-            // (this also checkpoints the WAL into the main file).
-            plain.disableWriteAheadLogging()
             userVersion = plain.version
-            expected = rowCounts(plain, "main")
-            val keyLiteral = String(passphrase, Charsets.US_ASCII)
-            plain.rawExecSQL("ATTACH DATABASE '${tmp.path.replace("'", "''")}' AS encrypted KEY \"$keyLiteral\"")
-            plain.rawExecSQL("SELECT sqlcipher_export('encrypted')")
-            plain.rawExecSQL("DETACH DATABASE encrypted")
+            expected = rowCounts { sql -> plain.rawQuery(sql, null) }
+            val enc = SQLiteDatabase.openOrCreateDatabase(tmp, passphrase, null, null, null)
+            try {
+                copyInto(plain, enc)
+                enc.version = userVersion
+            } finally {
+                enc.close()
+            }
         } finally {
             plain.close()
         }
@@ -158,10 +165,8 @@ object DatabaseEncryption {
         // Verify the copy with the same key path Room will use, before touching the original.
         val enc = SQLiteDatabase.openDatabase(tmp.path, passphrase, null, SQLiteDatabase.OPEN_READWRITE, null, null)
         try {
-            // Room's schema version lives in user_version; carry it over explicitly.
-            if (enc.version != userVersion) enc.version = userVersion
             check(enc.version == userVersion) { "Encrypted copy has user_version ${enc.version}, expected $userVersion" }
-            val actual = rowCounts(enc, "main")
+            val actual = rowCounts { sql -> enc.rawQuery(sql, arrayOf<String>()) }
             check(actual == expected) { "Encrypted copy row counts differ: $actual vs $expected" }
         } finally {
             enc.close()
@@ -171,10 +176,66 @@ object DatabaseEncryption {
         val backup = File(dbFile.path + PLAINTEXT_BACKUP_SUFFIX)
         backup.delete()
         sidecars(dbFile).forEach { it.delete() }
+        sidecars(tmp).forEach { it.delete() }
         check(dbFile.renameTo(backup)) { "Could not move the plaintext database aside" }
         check(tmp.renameTo(dbFile)) { "Could not move the encrypted database into place" }
         backup.delete()
         sidecars(backup).forEach { it.delete() }
+    }
+
+    /** Tables the platform or SQLCipher create on their own; never copied or counted. */
+    private val INTERNAL_TABLES = setOf("android_metadata")
+
+    private fun copyInto(plain: android.database.sqlite.SQLiteDatabase, enc: SQLiteDatabase) {
+        data class SchemaObject(val type: String, val name: String, val table: String, val sql: String)
+        val objects = mutableListOf<SchemaObject>()
+        plain.rawQuery(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'",
+            null
+        ).use { c ->
+            while (c.moveToNext()) objects += SchemaObject(c.getString(0), c.getString(1), c.getString(2), c.getString(3))
+        }
+        val tables = objects.filter { it.type == "table" && it.name !in INTERNAL_TABLES }
+
+        enc.beginTransaction()
+        try {
+            tables.forEach { enc.execSQL(it.sql) }
+            for (t in tables) {
+                plain.rawQuery("SELECT * FROM `${t.name.replace("`", "``")}`", null).use { c ->
+                    val columns = c.columnNames
+                    while (c.moveToNext()) {
+                        val values = android.content.ContentValues(columns.size)
+                        for (i in columns.indices) {
+                            when (c.getType(i)) {
+                                android.database.Cursor.FIELD_TYPE_NULL -> values.putNull(columns[i])
+                                android.database.Cursor.FIELD_TYPE_INTEGER -> values.put(columns[i], c.getLong(i))
+                                android.database.Cursor.FIELD_TYPE_FLOAT -> values.put(columns[i], c.getDouble(i))
+                                android.database.Cursor.FIELD_TYPE_BLOB -> values.put(columns[i], c.getBlob(i))
+                                else -> values.put(columns[i], c.getString(i))
+                            }
+                        }
+                        enc.insertOrThrow(t.name, null, values)
+                    }
+                }
+            }
+            // AUTOINCREMENT counters, so the next audit_log seq continues where it left off.
+            val hasSequence = plain.rawQuery(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'", null
+            ).use { it.moveToFirst() }
+            if (hasSequence) {
+                plain.rawQuery("SELECT name, seq FROM sqlite_sequence", null).use { c ->
+                    while (c.moveToNext()) {
+                        enc.execSQL("DELETE FROM sqlite_sequence WHERE name = ?", arrayOf<Any>(c.getString(0)))
+                        enc.execSQL("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", arrayOf<Any>(c.getString(0), c.getLong(1)))
+                    }
+                }
+            }
+            // Indexes, triggers and views last: triggers must not fire while rows are copied.
+            objects.filter { it.type != "table" && it.table !in INTERNAL_TABLES }.forEach { enc.execSQL(it.sql) }
+            enc.setTransactionSuccessful()
+        } finally {
+            enc.endTransaction()
+        }
     }
 
     /** Completes or undoes a swap that a crash or kill interrupted. */
@@ -204,13 +265,13 @@ object DatabaseEncryption {
 
     private fun sidecars(file: File) = listOf("-wal", "-shm", "-journal").map { File(file.path + it) }
 
-    private fun rowCounts(db: SQLiteDatabase, schema: String): Map<String, Long> {
+    private fun rowCounts(query: (String) -> android.database.Cursor): Map<String, Long> {
         val tables = mutableListOf<String>()
-        db.rawQuery("SELECT name FROM $schema.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'", arrayOf<String>()).use { c ->
+        query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").use { c ->
             while (c.moveToNext()) tables += c.getString(0)
         }
-        return tables.sorted().associateWith { table ->
-            db.rawQuery("SELECT COUNT(*) FROM $schema.`${table.replace("`", "``")}`", arrayOf<String>()).use { c ->
+        return tables.filter { it !in INTERNAL_TABLES }.sorted().associateWith { table ->
+            query("SELECT COUNT(*) FROM `${table.replace("`", "``")}`").use { c ->
                 c.moveToFirst(); c.getLong(0)
             }
         }
