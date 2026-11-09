@@ -4,7 +4,13 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodes
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -39,7 +45,7 @@ class ConsentGateScreenshotTest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
-    private val out = "build/outputs/roborazzi"
+    private val out = "build/outputs/roborazzi".also { java.io.File(it).mkdirs() }
     private val scraper = OsintScraperService(customClient = FakeGithubApi.client())
 
     private var subject by mutableStateOf<SubjectProfile?>(null)
@@ -71,15 +77,23 @@ class ConsentGateScreenshotTest {
         composeTestRule.waitForIdle()
     }
 
+    /** The playbook sits below the LIWC header in a lazy list, so it is only composed once scrolled to. */
+    private fun scrollPlaybookTo(matcher: androidx.compose.ui.test.SemanticsMatcher) {
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(matcher)
+        composeTestRule.waitForIdle()
+    }
+
     @Test
     fun consent_gate_stills() {
         setUpScreen()
+        scrollPlaybookTo(hasTestTag("restricted_notice"))
         composeTestRule.onNodeWithTag("restricted_notice").assertExists()
         composeTestRule.onRoot().captureRoboImage("$out/consent_1_unverified_withheld.png")
 
         composeTestRule.onNodeWithTag("consent_SELF").performClick()
         composeTestRule.waitForIdle()
         assertTrue(subject!!.restrictedOutputsUnlocked)
+        scrollPlaybookTo(hasText("WHAT MAKES", substring = true))
         composeTestRule.onNodeWithTag("restricted_notice").assertDoesNotExist()
         composeTestRule.onRoot().captureRoboImage("$out/consent_2_self_unlocked.png")
     }
@@ -87,6 +101,7 @@ class ConsentGateScreenshotTest {
     @Test
     fun consent_gate_gif() {
         setUpScreen()
+        scrollPlaybookTo(hasTestTag("restricted_notice"))
         composeTestRule.onRoot().captureRoboGif(composeTestRule, "$out/consent_gate.gif") {
             composeTestRule.onNodeWithTag("consent_SELF").performClick()
             composeTestRule.waitForIdle()

@@ -33,7 +33,7 @@ class AppScreenshotTest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
-    private val out = "build/outputs/roborazzi"
+    private val out = "build/outputs/roborazzi".also { java.io.File(it).mkdirs() }
 
     private val tabs = listOf(
         "nav_tab_command" to "1_command",

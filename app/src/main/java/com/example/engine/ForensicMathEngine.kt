@@ -560,17 +560,25 @@ object ForensicMathEngine {
         utcHours.forEach { bins[(it % 24 + 24) % 24]++ }
 
         // Too few real timestamps: report that honestly instead of inventing an activity pattern.
+        // A location the person publicly declared is not an inference, so it is still geocoded.
         if (utcHours.size < MIN_TIMESTAMPS_FOR_CHRONO) {
+            val declared = declaredLocation?.trim()?.takeIf { it.isNotEmpty() }
+            val match = declared?.lowercase(Locale.US)?.let { clean ->
+                GLOBAL_GAZETTEER.entries.firstOrNull { (cityKey, _) -> cityKey in clean }?.value
+            }
             return ChronoGeoEvaluation(
                 hourlyBins = bins.toList(),
                 troughStartUtc = 0,
                 troughEndUtc = 0,
                 inferredUtcOffset = 0,
                 windowLabel = "INSUFFICIENT TIMESTAMPS (${utcHours.size}/$MIN_TIMESTAMPS_FOR_CHRONO)",
-                lat = 0.0,
-                lon = 0.0,
-                locationLabel = declaredLocation?.takeIf { it.isNotBlank() }?.let { "DECLARED: ${it.uppercase(Locale.US)}" }
-                    ?: "UNKNOWN"
+                lat = match?.first ?: 0.0,
+                lon = match?.second ?: 0.0,
+                locationLabel = when {
+                    match != null -> "DECLARED: ${match.third.uppercase(Locale.US)}"
+                    declared != null -> "DECLARED: ${declared.uppercase(Locale.US)}"
+                    else -> "UNKNOWN"
+                }
             )
         }
 
