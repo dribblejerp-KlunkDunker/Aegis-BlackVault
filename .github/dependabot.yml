@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned GitHub Actions in android-ci.yml current (pins are bumped by PR, reviewed as code).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
