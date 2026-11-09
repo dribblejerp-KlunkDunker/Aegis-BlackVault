@@ -748,7 +748,8 @@ sealed interface AiSynthesisState {
     tableName = "subject_profiles",
     indices = [
         Index(value = ["handle"]),
-        Index(value = ["updatedAt"])
+        Index(value = ["updatedAt"]),
+        Index(value = ["projectId"])
     ]
 )
 data class SubjectProfileEntity(
@@ -788,7 +789,9 @@ data class SubjectProfileEntity(
     // Added in schema v5 (consent records)
     val consentMethod: String = "",
     val consentRecordedAt: Long = 0L,
-    val consentExpiresAt: Long = 0L
+    val consentExpiresAt: Long = 0L,
+    // Added in schema v6 (projects as the isolation boundary)
+    val projectId: String = ProjectEntity.DEFAULT_ID
 ) {
     fun toDomain(
         relationalArtifacts: List<RawSocialMediaEntity>? = null,
@@ -887,7 +890,8 @@ data class SubjectProfileEntity(
             dataProvenance = dataProvenance,
             consentMethod = consentMethod,
             consentRecordedAt = consentRecordedAt,
-            consentExpiresAt = consentExpiresAt
+            consentExpiresAt = consentExpiresAt,
+            projectId = projectId
         )
     }
 }
@@ -1214,7 +1218,9 @@ data class SubjectProfile(
     /** When consent was recorded (epoch millis), 0 when none. */
     val consentRecordedAt: Long = 0L,
     /** When recorded consent lapses (epoch millis), 0 = no expiry. */
-    val consentExpiresAt: Long = 0L
+    val consentExpiresAt: Long = 0L,
+    /** Owning project (schema v6). Blank means "the active project" when first saved. */
+    val projectId: String = ""
 ) {
     /** True when recorded consent has an expiry date that has passed. */
     val consentExpired: Boolean
@@ -1277,7 +1283,8 @@ data class SubjectProfile(
             dataProvenance = dataProvenance,
             consentMethod = consentMethod,
             consentRecordedAt = consentRecordedAt,
-            consentExpiresAt = consentExpiresAt
+            consentExpiresAt = consentExpiresAt,
+            projectId = projectId.ifBlank { ProjectEntity.DEFAULT_ID }
         )
     }
 
@@ -1297,7 +1304,7 @@ data class SubjectProfile(
         )
 }
 
-@Entity(tableName = "knowledge_triplets")
+@Entity(tableName = "knowledge_triplets", indices = [Index(value = ["projectId"])])
 data class KnowledgeTripletEntity(
     @PrimaryKey val id: String,
     val subjectHandle: String,
@@ -1306,8 +1313,38 @@ data class KnowledgeTripletEntity(
     val nodeCategory: String,
     val confidence: Float,
     val provSha256: String,
-    val timestamp: Long
+    val timestamp: Long,
+    // Added in schema v6: triplets are keyed by handle, so the project keeps the same handle in two
+    // projects from sharing (or erasing) each other's graph.
+    val projectId: String = ProjectEntity.DEFAULT_ID
 )
+
+/**
+ * A project is the isolation boundary (schema v6, idea from GHOST): every subject, artifact, graph
+ * edge and triplet belongs to exactly one project. Mind-map links to subjects in other projects are
+ * only built when both projects opt in. Retention is set per project.
+ */
+@Entity(tableName = "projects")
+data class ProjectEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val createdAtMillis: Long,
+    /** 0 = keep; otherwise non-demo subjects not updated within this many days are erased. */
+    val retentionDays: Int = 0,
+    val allowCrossProjectLinks: Boolean = false
+) {
+    companion object {
+        const val DEFAULT_ID = "default"
+        const val DEFAULT_NAME = "Default project"
+
+        /** Pseudonymous reference for the audit log, which outlives the project and must not hold its name. */
+        fun refFor(projectId: String): String {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            return md.digest("aegis-project:$projectId".toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }.take(12)
+        }
+    }
+}
 
 @Entity(tableName = "ast_patches")
 data class AstPatchEntity(
@@ -1389,7 +1426,9 @@ enum class AuditAction {
     AI_REQUEST,
     SUBJECT_DELETED,
     RETENTION_PURGE,
-    SETTINGS_CHANGED
+    SETTINGS_CHANGED,
+    PROJECT_CREATED,
+    PROJECT_DELETED
 }
 
 /**

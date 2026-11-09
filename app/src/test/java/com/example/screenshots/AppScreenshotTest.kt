@@ -1,14 +1,18 @@
 package com.example.screenshots
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import com.example.MainActivity
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboGif
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
+import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +30,7 @@ import org.robolectric.shadows.ShadowLooper
  * The Command deck and mind map run endless animations, so these tests drive the Compose clock
  * by hand instead of waiting for idle (which would never come).
  */
+@OptIn(ExperimentalRoborazziApi::class)
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AppScreenshotTest {
@@ -99,6 +104,34 @@ class AppScreenshotTest {
     @Test
     @Config(sdk = [36], qualifiers = "w1280dp-h800dp-land-xhdpi")
     fun chromebook_governance_tab() = captureGovernance("chromebook")
+
+    /** Project bar, the new-project dialog, and the empty state a new project opens to. */
+    private fun captureProjects(prefix: String) {
+        waitForSeedData()
+        composeTestRule.onNodeWithTag("project_menu_btn", useUnmergedTree = true).performClick()
+        settle()
+        // The menu is a popup (its own window), so capture the whole screen rather than one root.
+        captureScreenRoboImage("$out/${prefix}_7_project_menu.png")
+        composeTestRule.onNodeWithTag("project_option_default", useUnmergedTree = true).performClick()
+        settle()
+        composeTestRule.onNodeWithTag("project_new_btn", useUnmergedTree = true).performClick()
+        settle()
+        composeTestRule.onNodeWithTag("project_new_name").performTextInput("Self-audit")
+        settle()
+        captureScreenRoboImage("$out/${prefix}_8_new_project_dialog.png")
+        composeTestRule.onNodeWithTag("project_new_confirm").performClick()
+        pumpUntil { composeTestRule.onAllNodesWithTag("empty_project_state").fetchSemanticsNodes().isNotEmpty() }
+        settle()
+        composeTestRule.onRoot().captureRoboImage("$out/${prefix}_9_empty_project.png")
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
+    fun phone_projects() = captureProjects("phone")
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w1280dp-h800dp-land-xhdpi")
+    fun chromebook_projects() = captureProjects("chromebook")
 
     @Test
     @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)

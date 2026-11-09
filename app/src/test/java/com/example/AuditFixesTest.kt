@@ -43,6 +43,7 @@ class AuditFixesTest {
             .allowMainThreadQueries()
             .build()
         repository = AegisRepository(db.aegisDao())
+        kotlinx.coroutines.runBlocking { repository.ensureDefaultProject() }
         FakeGithubApi.requestedUrls.clear()
     }
 

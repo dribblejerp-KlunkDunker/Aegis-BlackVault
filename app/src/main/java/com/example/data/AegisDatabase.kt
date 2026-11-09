@@ -116,17 +116,90 @@ interface AegisDao {
     @Query("DELETE FROM subject_profiles WHERE id = :subjectId")
     suspend fun deleteSubjectRow(subjectId: String): Int
 
-    @Query("DELETE FROM knowledge_triplets WHERE subjectHandle = :handle")
-    suspend fun deleteTripletsForHandle(handle: String): Int
+    @Query("DELETE FROM knowledge_triplets WHERE subjectHandle = :handle AND projectId = :projectId")
+    suspend fun deleteTripletsForHandle(handle: String, projectId: String): Int
+
+    // ------------------------------------------------------------------------
+    // Projects (schema v6): the isolation boundary
+    // ------------------------------------------------------------------------
+    @Query("SELECT * FROM projects ORDER BY createdAtMillis ASC")
+    fun observeProjects(): Flow<List<ProjectEntity>>
+
+    @Query("SELECT * FROM projects ORDER BY createdAtMillis ASC")
+    suspend fun allProjects(): List<ProjectEntity>
+
+    @Query("SELECT * FROM projects WHERE id = :projectId LIMIT 1")
+    suspend fun projectById(projectId: String): ProjectEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertProjectIfAbsent(project: ProjectEntity): Long
+
+    @Update
+    suspend fun updateProject(project: ProjectEntity): Int
+
+    @Query("DELETE FROM projects WHERE id = :projectId")
+    suspend fun deleteProjectRow(projectId: String): Int
+
+    @Query("SELECT projectId FROM subject_profiles WHERE id = :subjectId LIMIT 1")
+    suspend fun projectOfSubject(subjectId: String): String?
+
+    @Transaction
+    @Query("SELECT * FROM subject_profiles WHERE projectId = :projectId ORDER BY updatedAt DESC")
+    fun observeDossiersInProject(projectId: String): Flow<List<SubjectIntelligenceDossierRelation>>
+
+    /**
+     * Subjects a new mind map in [projectId] may link to: its own, plus those in other projects when
+     * both this project and the other one allow cross-project links.
+     */
+    @Transaction
+    @Query(
+        "SELECT * FROM subject_profiles WHERE projectId = :projectId OR (" +
+            "(SELECT allowCrossProjectLinks FROM projects WHERE id = :projectId) = 1 AND " +
+            "projectId IN (SELECT id FROM projects WHERE allowCrossProjectLinks = 1)) ORDER BY updatedAt DESC"
+    )
+    fun observeLinkableDossiers(projectId: String): Flow<List<SubjectIntelligenceDossierRelation>>
+
+    @Query("SELECT * FROM knowledge_triplets WHERE projectId = :projectId ORDER BY timestamp DESC LIMIT 60")
+    fun observeTripletsInProject(projectId: String): Flow<List<KnowledgeTripletEntity>>
+
+    @Query(
+        "SELECT r.* FROM raw_social_media_entities r JOIN subject_profiles s ON s.id = r.subjectId " +
+            "WHERE s.projectId = :projectId ORDER BY r.postedTimestampIso DESC LIMIT 100"
+    )
+    fun observeRawEntitiesInProject(projectId: String): Flow<List<RawSocialMediaEntity>>
+
+    @Query(
+        "SELECT m.* FROM mind_map_hierarchy_edges m JOIN subject_profiles s ON s.id = m.rootSubjectId " +
+            "WHERE s.projectId = :projectId ORDER BY m.hierarchyDepth ASC, m.updatedAtMillis DESC LIMIT 150"
+    )
+    fun observeHierarchyInProject(projectId: String): Flow<List<MindMapHierarchyEntity>>
+
+    @Query("SELECT * FROM subject_profiles WHERE projectId = :projectId")
+    suspend fun profilesInProject(projectId: String): List<SubjectProfileEntity>
+
+    @Query("SELECT * FROM subject_profiles WHERE projectId = :projectId AND updatedAt < :cutoffMillis AND consentStatus != 'DEMO'")
+    suspend fun profilesOlderThanInProject(projectId: String, cutoffMillis: Long): List<SubjectProfileEntity>
+
+    @Query("DELETE FROM knowledge_triplets WHERE projectId = :projectId")
+    suspend fun deleteTripletsInProject(projectId: String): Int
+
+    /** Erases a project and everything in it (subjects cascade to artifacts, profiles and edges). */
+    @Transaction
+    suspend fun deleteProjectEverywhere(projectId: String): Int {
+        val subjects = profilesInProject(projectId)
+        subjects.forEach { deleteSubjectRow(it.id) }
+        deleteTripletsInProject(projectId)
+        deleteProjectRow(projectId)
+        return subjects.size
+    }
 
     @Transaction
     suspend fun deleteSubjectEverywhere(subjectId: String, handle: String): Int {
-        deleteTripletsForHandle(handle)
+        val projectId = projectOfSubject(subjectId) ?: return 0
+        deleteTripletsForHandle(handle, projectId)
         return deleteSubjectRow(subjectId)
     }
 
-    @Query("SELECT * FROM subject_profiles WHERE updatedAt < :cutoffMillis AND consentStatus != 'DEMO'")
-    suspend fun profilesOlderThan(cutoffMillis: Long): List<SubjectProfileEntity>
 
     // ------------------------------------------------------------------------
     // 5c. Append-only, hash-chained audit log (Phase 2)
@@ -190,9 +263,10 @@ interface AegisDao {
         MindMapHierarchyEntity::class,
         KnowledgeTripletEntity::class,
         AstPatchEntity::class,
-        AuditLogEntity::class
+        AuditLogEntity::class,
+        ProjectEntity::class
     ],
-    version = 5,
+    version = 6,
     // Schema JSON is exported to app/schemas (see room.schemaLocation in app/build.gradle.kts)
     // so future migrations can be written and tested against real schemas.
     exportSchema = true
@@ -245,6 +319,32 @@ abstract class AegisDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v5 -> v6: projects as the isolation boundary. Every existing subject and triplet moves into
+         * the default project; the global retention setting is carried over by the ViewModel.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `projects` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`createdAtMillis` INTEGER NOT NULL, `retentionDays` INTEGER NOT NULL, " +
+                        "`allowCrossProjectLinks` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "INSERT OR IGNORE INTO projects (id, name, createdAtMillis, retentionDays, allowCrossProjectLinks) " +
+                        "VALUES ('${ProjectEntity.DEFAULT_ID}', '${ProjectEntity.DEFAULT_NAME}', ${System.currentTimeMillis()}, 0, 0)"
+                )
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN projectId TEXT NOT NULL DEFAULT '${ProjectEntity.DEFAULT_ID}'")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_subject_profiles_projectId` ON `subject_profiles` (`projectId`)")
+                db.execSQL("ALTER TABLE knowledge_triplets ADD COLUMN projectId TEXT NOT NULL DEFAULT '${ProjectEntity.DEFAULT_ID}'")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_triplets_projectId` ON `knowledge_triplets` (`projectId`)")
+            }
+        }
+
+        /** Every migration, in order, for the builder and the migration tests. */
+        val ALL_MIGRATIONS: Array<Migration>
+            get() = arrayOf(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+
         /** SQLite-level enforcement that audit_log rows can be added but never changed or removed. */
         fun installAuditTriggers(db: SupportSQLiteDatabase) {
             db.execSQL(
@@ -273,7 +373,7 @@ abstract class AegisDatabase : RoomDatabase() {
                 val appContext = context.applicationContext
                 val builder = Room.databaseBuilder(appContext, AegisDatabase::class.java, DB_NAME)
                     // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(*ALL_MIGRATIONS)
                     .addCallback(AUDIT_TRIGGERS_CALLBACK)
                 // Encryption at rest: converts an existing plaintext file once, then opens with SQLCipher.
                 DatabaseEncryption.prepare(appContext, DB_NAME)?.let { passphrase ->
@@ -305,15 +405,34 @@ class AegisRepository(private val dao: AegisDao) {
     fun observeMindMapHierarchyForSubject(rootSubjectId: String): Flow<List<MindMapHierarchyEntity>> =
         dao.observeMindMapHierarchyForSubject(rootSubjectId)
 
+    class CrossProjectWriteException(message: String) : IllegalStateException(message)
+
+    /**
+     * Saves [profile] into its project ([projectId] when the profile has none yet). A subject never
+     * moves between projects: saving a profile whose id already belongs to another project throws
+     * [CrossProjectWriteException].
+     */
     suspend fun saveProfile(
         profile: SubjectProfile,
         allProfiles: List<SubjectProfile> = emptyList(),
-        triplets: List<KnowledgeTripletEntity> = emptyList()
+        triplets: List<KnowledgeTripletEntity> = emptyList(),
+        projectId: String = ProjectEntity.DEFAULT_ID
     ) {
+        val owner = profile.projectId.ifBlank { projectId }
+        dao.projectOfSubject(profile.id)?.let { existing ->
+            if (existing != owner) {
+                throw CrossProjectWriteException("Subject ${profile.id} belongs to another project; refusing to move it")
+            }
+        }
+        if (dao.projectById(owner) == null) {
+            throw CrossProjectWriteException("Project $owner does not exist")
+        }
         // Single persistence choke point: restricted inferences are never stored for subjects
         // without recorded consent, no matter which screen or service produced the profile.
         @Suppress("NAME_SHADOWING")
-        val profile = ForensicMathEngine.applyConsentGate(profile)
+        val profile = ForensicMathEngine.applyConsentGate(profile.copy(projectId = owner))
+        @Suppress("NAME_SHADOWING")
+        val triplets = triplets.map { it.copy(projectId = owner) }
         val subjectEntity = profile.toEntity()
         val rawEntities = profile.toRawSocialMediaEntities()
         val lingEntity = profile.toLinguisticProfileEntity()
@@ -372,16 +491,96 @@ class AegisRepository(private val dao: AegisDao) {
         return removed > 0
     }
 
-    /** Deletes non-demo subjects not updated within [retentionDays]. Returns how many were erased. */
-    suspend fun purgeExpired(retentionDays: Int, nowMillis: Long = System.currentTimeMillis()): Int {
-        if (retentionDays <= 0) return 0
-        val cutoff = nowMillis - retentionDays * 24L * 60 * 60 * 1000
-        val stale = dao.profilesOlderThan(cutoff)
-        stale.forEach { dao.deleteSubjectEverywhere(it.id, it.handle) }
-        if (stale.isNotEmpty()) {
-            audit(AuditAction.RETENTION_PURGE, null, "Retention purge: ${stale.size} subject(s) older than $retentionDays days erased")
+    /**
+     * Applies each project's own retention period: non-demo subjects not updated within it are erased.
+     * Returns how many were erased in total.
+     */
+    suspend fun purgeExpired(nowMillis: Long = System.currentTimeMillis()): Int {
+        var total = 0
+        for (project in dao.allProjects()) {
+            if (project.retentionDays <= 0) continue
+            val cutoff = nowMillis - project.retentionDays * 24L * 60 * 60 * 1000
+            val stale = dao.profilesOlderThanInProject(project.id, cutoff)
+            stale.forEach { dao.deleteSubjectEverywhere(it.id, it.handle) }
+            if (stale.isNotEmpty()) {
+                audit(
+                    AuditAction.RETENTION_PURGE,
+                    null,
+                    "Retention purge in project ${ProjectEntity.refFor(project.id)}: ${stale.size} subject(s) " +
+                        "older than ${project.retentionDays} days erased"
+                )
+            }
+            total += stale.size
         }
-        return stale.size
+        return total
+    }
+
+    // ------------------------------------------------------------------------
+    // Projects (schema v6)
+    // ------------------------------------------------------------------------
+
+    val projectsFlow: Flow<List<ProjectEntity>> = dao.observeProjects()
+
+    fun dossiersInProject(projectId: String) = dao.observeDossiersInProject(projectId)
+    fun linkableDossiers(projectId: String) = dao.observeLinkableDossiers(projectId)
+    fun tripletsInProject(projectId: String) = dao.observeTripletsInProject(projectId)
+    fun rawEntitiesInProject(projectId: String) = dao.observeRawEntitiesInProject(projectId)
+    fun hierarchyInProject(projectId: String) = dao.observeHierarchyInProject(projectId)
+
+    suspend fun project(projectId: String): ProjectEntity? = dao.projectById(projectId)
+
+    suspend fun ensureDefaultProject() {
+        dao.insertProjectIfAbsent(
+            ProjectEntity(ProjectEntity.DEFAULT_ID, ProjectEntity.DEFAULT_NAME, createdAtMillis = 0L)
+        )
+    }
+
+    /** Creates a project and returns it. The audit entry records only a pseudonymous reference, not the name. */
+    suspend fun createProject(name: String, nowMillis: Long = System.currentTimeMillis()): ProjectEntity {
+        val clean = name.trim().take(60).ifBlank { "Untitled project" }
+        val project = ProjectEntity(
+            id = "proj-" + ForensicMathEngine.sha256("$clean:$nowMillis:${System.nanoTime()}").take(12),
+            name = clean,
+            createdAtMillis = nowMillis
+        )
+        dao.insertProjectIfAbsent(project)
+        audit(AuditAction.PROJECT_CREATED, null, "Project ${ProjectEntity.refFor(project.id)} created")
+        return project
+    }
+
+    suspend fun setProjectRetention(projectId: String, days: Int) {
+        val project = dao.projectById(projectId) ?: return
+        dao.updateProject(project.copy(retentionDays = days.coerceAtLeast(0)))
+        audit(
+            AuditAction.SETTINGS_CHANGED,
+            null,
+            "Project ${ProjectEntity.refFor(projectId)}: " + if (days > 0) "retention set to $days days" else "retention disabled"
+        )
+    }
+
+    suspend fun setProjectCrossLinks(projectId: String, allowed: Boolean) {
+        val project = dao.projectById(projectId) ?: return
+        dao.updateProject(project.copy(allowCrossProjectLinks = allowed))
+        audit(
+            AuditAction.SETTINGS_CHANGED,
+            null,
+            "Project ${ProjectEntity.refFor(projectId)}: cross-project links " + if (allowed) "allowed" else "blocked"
+        )
+    }
+
+    /**
+     * Erases a project with every subject, artifact, profile, graph edge and triplet in it.
+     * The default project cannot be deleted. Returns how many subjects were erased, or -1 if refused.
+     */
+    suspend fun deleteProject(projectId: String): Int {
+        if (projectId == ProjectEntity.DEFAULT_ID || dao.projectById(projectId) == null) return -1
+        val erased = dao.deleteProjectEverywhere(projectId)
+        audit(
+            AuditAction.PROJECT_DELETED,
+            null,
+            "Project ${ProjectEntity.refFor(projectId)} erased with $erased subject(s), their artifacts, graph edges and triplets"
+        )
+        return erased
     }
 
     suspend fun saveTriplet(triplet: KnowledgeTripletEntity) {
@@ -397,6 +596,7 @@ class AegisRepository(private val dao: AegisDao) {
     }
 
     suspend fun ensureSeedData() {
+        ensureDefaultProject()
         if (dao.getProfileCount() > 0) return
 
         val now = System.currentTimeMillis()

@@ -42,6 +42,7 @@ class ExampleRobolectricTest {
             .allowMainThreadQueries()
             .build()
         repository = AegisRepository(db.aegisDao())
+        kotlinx.coroutines.runBlocking { repository.ensureDefaultProject() }
     }
 
     @After

@@ -10,6 +10,7 @@ import com.example.model.AuditAction
 import com.example.model.AuditLogEntity
 import com.example.model.ConsentMethod
 import com.example.model.ConsentStatus
+import com.example.model.ProjectEntity
 import com.example.model.ScrapedArtifactItem
 import com.example.model.ScraperPlatformMode
 import com.example.network.OsintScraperService
@@ -44,6 +45,7 @@ class GovernanceTest {
             .allowMainThreadQueries()
             .build()
         repository = AegisRepository(db.aegisDao())
+        kotlinx.coroutines.runBlocking { repository.ensureDefaultProject() }
         FakeGithubApi.requestedUrls.clear()
     }
 
@@ -136,12 +138,14 @@ class GovernanceTest {
             .copy(updatedAt = System.currentTimeMillis() - 100L * 24 * 60 * 60 * 1000)
         repository.saveProfile(stale, listOf(stale))
 
-        assertEquals(1, repository.purgeExpired(retentionDays = 30))
+        repository.setProjectRetention(ProjectEntity.DEFAULT_ID, 30)
+        assertEquals(1, repository.purgeExpired())
         assertNull(db.aegisDao().observeFullDossierById(stale.id).first())
         // Demo personas are seeded "now" and are exempt anyway.
         assertTrue(db.aegisDao().observeFullDossierById("subj-alpha").first() != null)
         assertEquals(AuditAction.RETENTION_PURGE.name, db.aegisDao().lastAuditEntry()!!.action)
-        assertEquals(0, repository.purgeExpired(retentionDays = 0))
+        repository.setProjectRetention(ProjectEntity.DEFAULT_ID, 0)
+        assertEquals(0, repository.purgeExpired())
     }
 
     @Test

@@ -63,6 +63,13 @@ data class AegisUiState(
     val auditEntries: List<AuditLogEntity> = emptyList(),
     val auditChain: AuditChainStatus? = null,
     val retentionDays: Int = 0,
+    // Projects (schema v6): every list above is scoped to the active project.
+    val projects: List<ProjectEntity> = emptyList(),
+    val activeProjectId: String = ProjectEntity.DEFAULT_ID,
+    /** Subjects a mind map may link to: this project's, plus opted-in other projects'. */
+    val linkableProfiles: List<SubjectProfile> = emptyList(),
+    /** True once the active project's subjects have been read at least once (empty means empty, not loading). */
+    val profilesLoaded: Boolean = false,
     val appLockEnabled: Boolean = false,
     val appLockAvailable: Boolean = false,
     val aiSynthesisState: AiSynthesisState = AiSynthesisState.Idle,
@@ -73,6 +80,9 @@ data class AegisUiState(
     ),
     val exportBannerMessage: String? = null
 ) {
+    val activeProject: ProjectEntity?
+        get() = projects.find { it.id == activeProjectId }
+
     val activeSubject: SubjectProfile?
         get() = profiles.find { it.id == selectedSubjectId } ?: profiles.firstOrNull()
 
@@ -89,6 +99,7 @@ data class AegisUiState(
         get() = inAppApiKeys[selectedAiProvider].orEmpty()
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: AegisRepository
@@ -102,6 +113,9 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = application.getSharedPreferences("aegis_settings", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(AegisUiState())
+    private val activeProjectId = MutableStateFlow(
+        settings.getString(KEY_ACTIVE_PROJECT, ProjectEntity.DEFAULT_ID) ?: ProjectEntity.DEFAULT_ID
+    )
     val uiState: StateFlow<AegisUiState> = _uiState.asStateFlow()
 
     init {
@@ -130,7 +144,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.update {
             it.copy(
-                retentionDays = settings.getInt(KEY_RETENTION_DAYS, 0),
+                activeProjectId = activeProjectId.value,
                 appLockEnabled = AppLock.isEnabled(application),
                 appLockAvailable = AppLock.isAvailable(application)
             )
@@ -138,10 +152,40 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             repository.ensureSeedData()
+            // v3.6 kept one global retention setting; from schema v6 it belongs to the default project.
+            if (settings.contains(KEY_RETENTION_DAYS)) {
+                val legacyDays = settings.getInt(KEY_RETENTION_DAYS, 0)
+                if (legacyDays > 0) repository.setProjectRetention(ProjectEntity.DEFAULT_ID, legacyDays)
+                settings.edit { remove(KEY_RETENTION_DAYS) }
+            }
+            // A remembered project that no longer exists falls back to the default one.
+            if (repository.project(activeProjectId.value) == null) switchProject(ProjectEntity.DEFAULT_ID)
             // Retention runs once per launch; then the chain is verified so the UI shows its state.
-            val purged = repository.purgeExpired(_uiState.value.retentionDays)
-            if (purged > 0) appendLog("RETENTION", "PURGED $purged SUBJECT(S) PAST THE ${_uiState.value.retentionDays}-DAY RETENTION PERIOD")
+            val purged = repository.purgeExpired()
+            if (purged > 0) appendLog("RETENTION", "PURGED $purged SUBJECT(S) PAST THEIR PROJECT'S RETENTION PERIOD")
             refreshAuditChain()
+        }
+
+        viewModelScope.launch {
+            combine(repository.projectsFlow, activeProjectId) { projects, activeId -> projects to activeId }
+                .collect { (projects, activeId) ->
+                    _uiState.update {
+                        it.copy(
+                            projects = projects,
+                            activeProjectId = activeId,
+                            retentionDays = projects.find { p -> p.id == activeId }?.retentionDays ?: 0
+                        )
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            activeProjectId.flatMapLatest { repository.linkableDossiers(it) }.collect { dossiers ->
+                val linkable = dossiers.map { rel ->
+                    rel.subject.toDomain(relationalArtifacts = rel.rawSocialEntities, relationalProfile = rel.linguisticProfile)
+                }
+                _uiState.update { it.copy(linkableProfiles = linkable) }
+            }
         }
 
         viewModelScope.launch {
@@ -151,13 +195,15 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            combine(
-                repository.fullDossiersFlow,
-                repository.tripletsFlow,
-                repository.patchesFlow,
-                repository.rawSocialEntitiesFlow,
-                repository.mindMapHierarchyFlow
-            ) { fullDossiers, tripletEntities, patchEntities, allRawSocial, allHierarchy ->
+            activeProjectId.flatMapLatest { projectId ->
+                combine(
+                    repository.dossiersInProject(projectId),
+                    repository.tripletsInProject(projectId),
+                    repository.patchesFlow,
+                    repository.rawEntitiesInProject(projectId),
+                    repository.hierarchyInProject(projectId)
+                ) { a, b, c, d, e -> Tuple5(a, b, c, d, e) }
+            }.map { (fullDossiers, tripletEntities, patchEntities, allRawSocial, allHierarchy) ->
                 val domainProfiles = fullDossiers.map { rel ->
                     rel.subject.toDomain(
                         relationalArtifacts = rel.rawSocialEntities,
@@ -185,6 +231,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     current.copy(
                         profiles = domainProfiles,
+                        profilesLoaded = true,
                         selectedSubjectId = validSelected,
                         triplets = triplets,
                         astPatches = patchesMap,
@@ -389,8 +436,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 dataProvenance = if (active.dataProvenance.isBlank()) auditEntry else "${active.dataProvenance} | $auditEntry"
             )
             val updated = scraperService.recomputeFromArtifacts(withConsent)
-            val allCurrent = listOf(updated) + _uiState.value.profiles.filter { it.id != updated.id }
-            repository.saveProfile(updated, allCurrent, _uiState.value.triplets)
+            val allCurrent = listOf(updated) + _uiState.value.linkableProfiles.filter { it.id != updated.id }
+            repository.saveProfile(updated, allCurrent, _uiState.value.triplets, projectId = activeProjectId.value)
             repository.audit(
                 AuditAction.CONSENT_CHANGED,
                 updated.id,
@@ -428,14 +475,61 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 0 = keep indefinitely; otherwise subjects not updated within this many days are erased. */
+    /** Retention for the active project. 0 = keep; otherwise subjects not updated within this many days are erased. */
     fun setRetentionDays(days: Int) {
-        settings.edit { putInt(KEY_RETENTION_DAYS, days) }
+        val projectId = activeProjectId.value
         _uiState.update { it.copy(retentionDays = days) }
         viewModelScope.launch {
-            repository.audit(AuditAction.SETTINGS_CHANGED, null, if (days > 0) "Retention set to $days days" else "Retention disabled")
-            val purged = repository.purgeExpired(days)
+            repository.setProjectRetention(projectId, days)
+            val purged = repository.purgeExpired()
             if (purged > 0) appendLog("RETENTION", "PURGED $purged SUBJECT(S)")
+            refreshAuditChain()
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Projects (schema v6)
+    // ------------------------------------------------------------------------
+
+    fun switchProject(projectId: String) {
+        settings.edit { putString(KEY_ACTIVE_PROJECT, projectId) }
+        activeProjectId.value = projectId
+        // The subject list reloads for the new project; selection falls back to its first subject.
+        _uiState.update { it.copy(activeProjectId = projectId, selectedSubjectId = "", comparisonSubjectId = "") }
+        appendLog("PROJECT", "SWITCHED PROJECT")
+    }
+
+    fun createProject(name: String) {
+        viewModelScope.launch {
+            val project = repository.createProject(name)
+            switchProject(project.id)
+            refreshAuditChain()
+        }
+    }
+
+    fun setCrossProjectLinks(allowed: Boolean) {
+        val projectId = activeProjectId.value
+        viewModelScope.launch {
+            repository.setProjectCrossLinks(projectId, allowed)
+            refreshAuditChain()
+        }
+    }
+
+    /** Erases the active project (never the default one) with everything in it, including cached exports. */
+    fun deleteActiveProject(context: Context) {
+        val projectId = activeProjectId.value
+        if (projectId == ProjectEntity.DEFAULT_ID) return
+        val handles = _uiState.value.profiles.map { it.handle }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val safe = handles.map { it.lowercase(Locale.US).replace(Regex("[^a-z0-9_-]"), "_").take(40) }
+                File(context.cacheDir, "exports").listFiles()
+                    ?.filter { f -> safe.any { h -> h.isNotEmpty() && f.name.contains(h) } }
+                    ?.forEach { it.delete() }
+            }
+            val erased = repository.deleteProject(projectId)
+            if (erased >= 0) appendLog("ERASURE", "PROJECT ERASED WITH $erased SUBJECT(S)")
+            switchProject(ProjectEntity.DEFAULT_ID)
             refreshAuditChain()
         }
     }
@@ -666,8 +760,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val updated = importRes.updatedProfile
-            val allCurrent = listOf(updated) + _uiState.value.profiles.filter { it.id != updated.id }
-            repository.saveProfile(updated, allCurrent, _uiState.value.triplets)
+            val allCurrent = listOf(updated) + _uiState.value.linkableProfiles.filter { it.id != updated.id }
+            repository.saveProfile(updated, allCurrent, _uiState.value.triplets, projectId = activeProjectId.value)
 
             _uiState.update {
                 it.copy(
@@ -756,8 +850,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            val allCurrent = listOf(result.profile) + _uiState.value.profiles.filter { it.id != result.profile.id }
-            repository.saveProfile(result.profile, allCurrent, result.triplets)
+            val allCurrent = listOf(result.profile) + _uiState.value.linkableProfiles.filter { it.id != result.profile.id }
+            repository.saveProfile(result.profile, allCurrent, result.triplets, projectId = activeProjectId.value)
             repository.audit(
                 AuditAction.SCRAPE,
                 result.profile.id,
@@ -866,8 +960,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             appendLog("GH_HF_HUB", "QUERYING GITHUB SEARCH API + HUGGING FACE MODELS/DATASETS FOR OSINT ENHANCEMENTS...")
 
             val res = scraperService.harvestGithubAndHuggingFaceEnhancements(active)
-            val allCurrent = listOf(res.profile) + _uiState.value.profiles.filter { it.id != res.profile.id }
-            repository.saveProfile(res.profile, allCurrent, res.triplets)
+            val allCurrent = listOf(res.profile) + _uiState.value.linkableProfiles.filter { it.id != res.profile.id }
+            repository.saveProfile(res.profile, allCurrent, res.triplets, projectId = activeProjectId.value)
 
             _uiState.update {
                 it.copy(
@@ -891,8 +985,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 platformLabel = platform.trim(),
                 timestampIso = timestampIso.trim()
             )
-            val allCurrent = listOf(updated) + _uiState.value.profiles.filter { it.id != updated.id }
-            repository.saveProfile(updated, allCurrent, _uiState.value.triplets)
+            val allCurrent = listOf(updated) + _uiState.value.linkableProfiles.filter { it.id != updated.id }
+            repository.saveProfile(updated, allCurrent, _uiState.value.triplets, projectId = activeProjectId.value)
             appendLog(
                 "ROOM_TX",
                 "PERSISTED RAW SOCIAL ENTITY + UPDATED LINGUISTIC PROFILE + MIND MAP HIERARCHY FOR [${updated.handle}]"
@@ -967,6 +1061,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
 
     private companion object {
+        /** Pre-v6 global retention; migrated into the default project once. */
         const val KEY_RETENTION_DAYS = "retention_days"
+        const val KEY_ACTIVE_PROJECT = "active_project_id"
     }
 }

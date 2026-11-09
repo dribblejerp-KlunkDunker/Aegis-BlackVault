@@ -11,6 +11,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
 import com.example.model.AuditAction
+import com.example.model.ProjectEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -92,12 +93,10 @@ class MigrationTest {
     }
 
     @Test
-    fun `v3 to v5 in one upgrade keeps every row and adds governance columns`() {
+    fun `v3 to v6 in one upgrade keeps every row and adds governance columns`() {
         helper.createDatabase(dbName, 3).use { insertV3Rows(it) }
 
-        val v5 = helper.runMigrationsAndValidate(
-            dbName, 5, true, AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5
-        )
+        val v5 = helper.runMigrationsAndValidate(dbName, 6, true, *AegisDatabase.ALL_MIGRATIONS)
 
         assertEquals(
             listOf<Any?>("UNVERIFIED", "", 0L, 0L),
@@ -117,11 +116,35 @@ class MigrationTest {
             listOf<Any?>(2L),
             v5.single("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audit_log'")
         )
+        // Schema v6: everything that existed lands in the default project.
+        assertEquals(
+            listOf<Any?>(ProjectEntity.DEFAULT_ID, ProjectEntity.DEFAULT_NAME, 0L, 0L),
+            v5.single(
+                "SELECT p.id, p.name, p.retentionDays, p.allowCrossProjectLinks FROM projects p"
+            )
+        )
+        assertEquals(listOf<Any?>(ProjectEntity.DEFAULT_ID), v5.single("SELECT projectId FROM subject_profiles"))
         v5.close()
     }
 
     @Test
+    fun `v5 to v6 moves subjects and triplets into the default project`() {
+        helper.createDatabase(dbName, 3).use { insertV3Rows(it) }
+        helper.runMigrationsAndValidate(dbName, 5, true, AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5).use { db ->
+            db.execSQL(
+                "INSERT INTO knowledge_triplets (id, subjectHandle, predicate, objectNode, nodeCategory, confidence, provSha256, timestamp) " +
+                    "VALUES ('t-1', '$LEGACY_HANDLE', 'USES', 'kotlin', 'SKILL', 0.9, '', 1)"
+            )
+        }
+        val v6 = helper.runMigrationsAndValidate(dbName, 6, true, AegisDatabase.MIGRATION_5_6)
+        assertEquals(listOf<Any?>(ProjectEntity.DEFAULT_ID), v6.single("SELECT projectId FROM knowledge_triplets"))
+        assertEquals(listOf<Any?>(ProjectEntity.DEFAULT_ID), v6.single("SELECT projectId FROM subject_profiles"))
+        v6.close()
+    }
+
+    @Test
     fun `a migrated file opens with the real database and governance works on it`() = runTest {
+        // Room's own builder runs the last step (v5 -> v6), exactly as on a user's device.
         helper.createDatabase(dbName, 3).use { insertV3Rows(it) }
         helper.runMigrationsAndValidate(
             dbName, 5, true, AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5
@@ -129,7 +152,7 @@ class MigrationTest {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = Room.databaseBuilder(context, AegisDatabase::class.java, dbName)
-            .addMigrations(AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5)
+            .addMigrations(*AegisDatabase.ALL_MIGRATIONS)
             .addCallback(AegisDatabase.AUDIT_TRIGGERS_CALLBACK)
             .allowMainThreadQueries()
             .build()

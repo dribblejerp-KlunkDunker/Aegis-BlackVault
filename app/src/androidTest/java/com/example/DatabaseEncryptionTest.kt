@@ -45,7 +45,7 @@ class DatabaseEncryptionTest {
 
     private fun open(name: String, passphrase: ByteArray?): AegisDatabase =
         Room.databaseBuilder(context, AegisDatabase::class.java, name)
-            .addMigrations(AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5)
+            .addMigrations(*AegisDatabase.ALL_MIGRATIONS)
             .addCallback(AegisDatabase.AUDIT_TRIGGERS_CALLBACK)
             .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
             .allowMainThreadQueries()
@@ -170,8 +170,8 @@ class DatabaseEncryptionTest {
 
         open(name, passphrase).let { db ->
             assertTrue(db.aegisDao().observeTriplets().first().any { it.id == "t-legacy" })
-            AegisRepository(db.aegisDao()).audit(AuditAction.IMPORT, "subj-x", "after v3 -> v5 upgrade")
-            assertEquals(5, db.openHelper.readableDatabase.version)
+            AegisRepository(db.aegisDao()).audit(AuditAction.IMPORT, "subj-x", "after v3 -> v6 upgrade")
+            assertEquals(6, db.openHelper.readableDatabase.version)
             db.close()
         }
     }

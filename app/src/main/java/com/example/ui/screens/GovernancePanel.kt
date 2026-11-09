@@ -34,6 +34,7 @@ import com.example.data.DatabaseEncryption
 import com.example.model.AuditChainStatus
 import com.example.model.AuditLogEntity
 import com.example.model.ConsentMethod
+import com.example.model.ProjectEntity
 import com.example.model.SubjectProfile
 import com.example.ui.theme.*
 import java.text.SimpleDateFormat
@@ -60,15 +61,54 @@ fun GovernancePanel(
     onSetAppLock: (Boolean) -> Unit,
     onVerifyAuditChain: () -> Unit,
     modifier: Modifier = Modifier,
-    storageEncryption: DatabaseEncryption.Status = DatabaseEncryption.status
+    storageEncryption: DatabaseEncryption.Status = DatabaseEncryption.status,
+    projectControls: ProjectControls? = null
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDeleteProject by remember { mutableStateOf(false) }
     val subjectRef = remember(subject.id) { AuditLogEntity.subjectRefFor(subject.id) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("governance_panel"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // 0. Project (isolation boundary)
+        val controls = projectControls
+        val project = controls?.active
+        if (controls != null && project != null) {
+            item {
+                GovCard("PROJECT · ${project.name}", CyanTelemetry) {
+                    GovLine("Isolation", "Subjects, artifacts, graph and triplets stay in this project")
+                    GovLine("Retention", if (project.retentionDays > 0) "${project.retentionDays} days" else "Keep")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Links to other projects", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Mind maps may link to subjects in other projects only when both projects allow it",
+                                color = TextSecondary,
+                                fontSize = 9.5.sp
+                            )
+                        }
+                        Switch(
+                            checked = project.allowCrossProjectLinks,
+                            onCheckedChange = controls.onSetCrossLinks,
+                            colors = SwitchDefaults.colors(checkedTrackColor = PhosphorGreenDim, checkedThumbColor = PhosphorGreen),
+                            modifier = Modifier.testTag("gov_cross_links_switch")
+                        )
+                    }
+                    if (project.id != ProjectEntity.DEFAULT_ID) {
+                        GovButton("ERASE PROJECT", AlarmRed, Modifier.testTag("gov_delete_project_btn")) {
+                            confirmDeleteProject = true
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Consent record
         item {
             GovCard("CONSENT RECORD", PhosphorGreen) {
@@ -127,7 +167,7 @@ fun GovernancePanel(
         // 4. Retention + app lock
         item {
             GovCard("RETENTION & DEVICE PROTECTION", AmberSignal) {
-                Text("Erase subjects not updated within:", color = TextSecondary, fontSize = 10.sp)
+                Text("Erase this project's subjects not updated within:", color = TextSecondary, fontSize = 10.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0 to "KEEP", 30 to "30 D", 90 to "90 D", 365 to "1 YR").forEach { (days, label) ->
                         val selected = retentionDays == days
@@ -220,6 +260,34 @@ fun GovernancePanel(
                 )
             }
         }
+    }
+
+    val deletingProject = projectControls?.active
+    if (confirmDeleteProject && projectControls != null && deletingProject != null) {
+        val project = deletingProject
+        AlertDialog(
+            onDismissRequest = { confirmDeleteProject = false },
+            containerColor = ObsidianPanel,
+            title = { Text("ERASE PROJECT \"${project.name}\"?", color = AlarmRed, fontWeight = FontWeight.Bold, fontSize = 14.sp) },
+            text = {
+                Text(
+                    "Every subject in this project is erased with its artifacts, linguistic profile, mind-map edges, " +
+                        "triplets and cached exports. Other projects are not touched. This cannot be undone.",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDeleteProject = false
+                        projectControls.onDeleteProject()
+                    },
+                    modifier = Modifier.testTag("gov_delete_project_confirm")
+                ) { Text("ERASE PROJECT", color = AlarmRed, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteProject = false }) { Text("CANCEL") } }
+        )
     }
 
     if (confirmDelete) {
