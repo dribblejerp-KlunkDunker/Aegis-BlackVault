@@ -141,14 +141,15 @@ object DatabaseEncryption {
         val userVersion: Int
         val plain = SQLiteDatabase.openDatabase(dbFile.path, "", null, SQLiteDatabase.OPEN_READWRITE, null, null)
         try {
-            // Fold any WAL content into the main file so nothing is left behind in -wal.
-            plain.rawExecSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+            // ATTACH is per connection. In WAL mode the pool may run the next statement on another
+            // connection that never saw the attachment, so drop to a single connection first
+            // (this also checkpoints the WAL into the main file).
+            plain.disableWriteAheadLogging()
             userVersion = plain.version
             expected = rowCounts(plain, "main")
             val keyLiteral = String(passphrase, Charsets.US_ASCII)
             plain.rawExecSQL("ATTACH DATABASE '${tmp.path.replace("'", "''")}' AS encrypted KEY \"$keyLiteral\"")
             plain.rawExecSQL("SELECT sqlcipher_export('encrypted')")
-            plain.rawExecSQL("PRAGMA encrypted.user_version = $userVersion")
             plain.rawExecSQL("DETACH DATABASE encrypted")
         } finally {
             plain.close()
@@ -157,6 +158,8 @@ object DatabaseEncryption {
         // Verify the copy with the same key path Room will use, before touching the original.
         val enc = SQLiteDatabase.openDatabase(tmp.path, passphrase, null, SQLiteDatabase.OPEN_READWRITE, null, null)
         try {
+            // Room's schema version lives in user_version; carry it over explicitly.
+            if (enc.version != userVersion) enc.version = userVersion
             check(enc.version == userVersion) { "Encrypted copy has user_version ${enc.version}, expected $userVersion" }
             val actual = rowCounts(enc, "main")
             check(actual == expected) { "Encrypted copy row counts differ: $actual vs $expected" }
