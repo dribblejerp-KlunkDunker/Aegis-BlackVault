@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Aegis Blackvault</string>
+    <string name="header_title">AEGIS_OS // BLACKVAULT</string>
+    <string name="desc_shield_icon">Aegis Tactical Shield</string>
+    <string name="desc_export_button">Export STIX 2.1 and Project ZIP</string>
+</resources>
+

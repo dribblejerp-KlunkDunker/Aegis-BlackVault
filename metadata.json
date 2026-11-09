@@ -1,0 +1,6 @@
+{
+  "name": "Aegis Blackvault",
+  "description": "OSINT, Psychometric Profiling, Mind Map Knowledge Graph, Walled-Garden AI Auto-Heal Scraper, and Actionable Intelligence Workbench.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
