@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.DatabaseEncryption
 import com.example.model.AuditChainStatus
 import com.example.model.AuditLogEntity
 import com.example.model.ConsentMethod
@@ -58,7 +59,8 @@ fun GovernancePanel(
     onSetRetentionDays: (Int) -> Unit,
     onSetAppLock: (Boolean) -> Unit,
     onVerifyAuditChain: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    storageEncryption: DatabaseEncryption.Status = DatabaseEncryption.status
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     val subjectRef = remember(subject.id) { AuditLogEntity.subjectRefFor(subject.id) }
@@ -161,6 +163,14 @@ fun GovernancePanel(
                         enabled = appLockAvailable || appLockEnabled,
                         colors = SwitchDefaults.colors(checkedTrackColor = PhosphorGreenDim, checkedThumbColor = PhosphorGreen),
                         modifier = Modifier.testTag("gov_app_lock_switch")
+                    )
+                }
+                Column(modifier = Modifier.testTag("gov_storage_encryption")) {
+                    Text("Storage", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        storageEncryption.label,
+                        color = if (storageEncryption == DatabaseEncryption.Status.ENCRYPTED) PhosphorGreen else AmberSignal,
+                        fontSize = 9.5.sp
                     )
                 }
             }

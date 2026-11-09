@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.engine.ForensicMathEngine
 import com.example.model.*
 import kotlinx.coroutines.flow.Flow
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Dao
 interface AegisDao {
@@ -203,6 +204,8 @@ abstract class AegisDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AegisDatabase? = null
 
+        const val DB_NAME = "aegis_blackvault.db"
+
         /**
          * v3 -> v4: adds consent status, collected word count and data provenance to subject_profiles.
          * Existing dossiers keep their data and start as UNVERIFIED with unknown provenance.
@@ -267,15 +270,16 @@ abstract class AegisDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): AegisDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AegisDatabase::class.java,
-                    "aegis_blackvault.db"
-                )
+                val appContext = context.applicationContext
+                val builder = Room.databaseBuilder(appContext, AegisDatabase::class.java, DB_NAME)
                     // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
                     .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     .addCallback(AUDIT_TRIGGERS_CALLBACK)
-                    .build()
+                // Encryption at rest: converts an existing plaintext file once, then opens with SQLCipher.
+                DatabaseEncryption.prepare(appContext, DB_NAME)?.let { passphrase ->
+                    builder.openHelperFactory(SupportOpenHelperFactory(passphrase))
+                }
+                val instance = builder.build()
                 INSTANCE = instance
                 instance
             }

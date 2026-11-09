@@ -11,6 +11,7 @@
         <exclude domain="database" path="aegis_blackvault.db-wal" />
         <exclude domain="sharedpref" path="aegis_secure_vault.xml" />
         <exclude domain="sharedpref" path="aegis_ai_model_vault.xml" />
+        <exclude domain="sharedpref" path="aegis_db_key.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="database" path="aegis_blackvault.db" />
@@ -18,5 +19,6 @@
         <exclude domain="database" path="aegis_blackvault.db-wal" />
         <exclude domain="sharedpref" path="aegis_secure_vault.xml" />
         <exclude domain="sharedpref" path="aegis_ai_model_vault.xml" />
+        <exclude domain="sharedpref" path="aegis_db_key.xml" />
     </device-transfer>
 </data-extraction-rules>

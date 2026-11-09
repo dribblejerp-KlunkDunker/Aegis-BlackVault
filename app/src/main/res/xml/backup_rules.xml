@@ -11,4 +11,5 @@
     <exclude domain="database" path="aegis_blackvault.db-wal" />
     <exclude domain="sharedpref" path="aegis_secure_vault.xml" />
     <exclude domain="sharedpref" path="aegis_ai_model_vault.xml" />
+    <exclude domain="sharedpref" path="aegis_db_key.xml" />
 </full-backup-content>
