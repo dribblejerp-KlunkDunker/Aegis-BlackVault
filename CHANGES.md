@@ -100,6 +100,29 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   - the audit-log triggers are installed by the migration;
   - erasure and the audit chain work on the upgraded file.
 
+## Phase 2c — encryption at rest
+- **The dossier database is encrypted with SQLCipher 4** (`net.zetetic:sqlcipher-android` 4.20.0,
+  AES-256).
+- **Device-bound key.** The 256-bit key is random. It is stored only wrapped by an Android Keystore
+  AES-GCM key (`DatabaseKeyManager`) and is excluded from backup.
+- **Existing installs are converted once** (`DatabaseEncryption`). The app writes an encrypted copy
+  with `sqlcipher_export`, checks that the copy opens with the key and holds the same row counts, and
+  only then swaps it in. A conversion interrupted by a crash or kill is finished or rolled back on
+  the next launch.
+  - If conversion fails, the app keeps working unencrypted, retries on the next launch, and the
+    Governance tab says so.
+  - A database whose key is gone is moved aside, not deleted.
+- **Governance tab** shows the storage status.
+- **Emulator CI job** (`instrumented-tests`, API 34) checks:
+  - the file on disk is not readable as SQLite and holds no plaintext names;
+  - a wrong key fails;
+  - a plaintext install converts with dossiers, audit chain and triggers intact;
+  - a v3 plaintext install encrypts and then migrates to v5;
+  - an interrupted conversion recovers.
+- **Limits.** Deleting the old plaintext file does not guarantee flash blocks are wiped. Code running
+  inside the unlocked app can still read the data. Robolectric tests run unencrypted because the
+  native library cannot load on the JVM.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only
