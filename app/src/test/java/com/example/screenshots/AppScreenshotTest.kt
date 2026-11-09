@@ -106,8 +106,8 @@ class AppScreenshotTest {
     fun chromebook_governance_tab() = captureGovernance("chromebook")
 
     /** Project bar, the new-project dialog, and the empty state a new project opens to. */
-    private fun captureProjects(prefix: String) = try {
-        captureProjectsInner(prefix)
+    private fun captureProjects(prefix: String, viaDialog: Boolean) = try {
+        captureProjectsInner(prefix, viaDialog)
     } finally {
         // The active project is remembered in settings and the database outlives this test, so put
         // the default project back; otherwise later tests open in the new, empty project.
@@ -116,10 +116,14 @@ class AppScreenshotTest {
             .edit().putString("active_project_id", com.example.model.ProjectEntity.DEFAULT_ID).commit()
     }
 
-    private fun captureProjectsInner(prefix: String) {
+    /**
+     * Project menu, new-project dialog and the empty state a new project opens to.
+     * On the phone layout Compose never reports idle while the dialog's text field is shown under
+     * Robolectric, so typing is only done at Chromebook width; the phone run creates the project
+     * through the same ViewModel call the dialog makes.
+     */
+    private fun captureProjectsInner(prefix: String, viaDialog: Boolean) {
         waitForSeedData()
-        // Text input waits for Compose to go idle, which the Command deck's endless animation prevents;
-        // the Psych tab has none.
         composeTestRule.onNodeWithTag("nav_tab_psych", useUnmergedTree = true).performClick()
         settle()
         composeTestRule.onNodeWithTag("project_menu_btn", useUnmergedTree = true).performClick()
@@ -128,12 +132,19 @@ class AppScreenshotTest {
         captureScreenRoboImage("$out/${prefix}_7_project_menu.png")
         composeTestRule.onNodeWithTag("project_option_default", useUnmergedTree = true).performClick()
         settle()
-        composeTestRule.onNodeWithTag("project_new_btn", useUnmergedTree = true).performClick()
-        settle()
-        composeTestRule.onNodeWithTag("project_new_name").performTextInput("Self-audit")
-        settle()
-        captureScreenRoboImage("$out/${prefix}_8_new_project_dialog.png")
-        composeTestRule.onNodeWithTag("project_new_confirm").performClick()
+        if (viaDialog) {
+            composeTestRule.onNodeWithTag("project_new_btn", useUnmergedTree = true).performClick()
+            settle()
+            composeTestRule.onNodeWithTag("project_new_name").performTextInput("Self-audit")
+            settle()
+            captureScreenRoboImage("$out/${prefix}_8_new_project_dialog.png")
+            composeTestRule.onNodeWithTag("project_new_confirm").performClick()
+        } else {
+            composeTestRule.runOnUiThread {
+                androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.ui.AegisViewModel::class.java]
+                    .createProject("Self-audit")
+            }
+        }
         pumpUntil { composeTestRule.onAllNodesWithTag("empty_project_state").fetchSemanticsNodes().isNotEmpty() }
         settle()
         composeTestRule.onRoot().captureRoboImage("$out/${prefix}_9_empty_project.png")
@@ -141,11 +152,11 @@ class AppScreenshotTest {
 
     @Test
     @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
-    fun phone_projects() = captureProjects("phone")
+    fun phone_projects() = captureProjects("phone", viaDialog = false)
 
     @Test
     @Config(sdk = [36], qualifiers = "w1280dp-h800dp-land-xhdpi")
-    fun chromebook_projects() = captureProjects("chromebook")
+    fun chromebook_projects() = captureProjects("chromebook", viaDialog = true)
 
     @Test
     @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
