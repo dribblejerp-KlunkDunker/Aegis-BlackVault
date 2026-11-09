@@ -4,7 +4,13 @@ import android.content.Context
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ChronoGeoEngine
+import com.example.engine.ConsentGate
+import com.example.engine.ForensicCommon
+import com.example.engine.MindMapEngine
+import com.example.engine.PlaybookEngine
+import com.example.engine.StylometryEngine
+import com.example.engine.WalledGardenCatalog
 import com.example.model.*
 import kotlinx.coroutines.flow.Flow
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -76,10 +82,14 @@ interface AegisDao {
     @Query("SELECT * FROM mind_map_hierarchy_edges WHERE rootSubjectId = :rootSubjectId ORDER BY hierarchyDepth ASC, confidenceWeight DESC")
     fun observeMindMapHierarchyForSubject(rootSubjectId: String): Flow<List<MindMapHierarchyEntity>>
 
-    @Query("SELECT * FROM mind_map_hierarchy_edges WHERE rootSubjectId = :rootSubjectId AND parentNodeId = :parentNodeId ORDER BY confidenceWeight DESC")
+    @Query(
+        "SELECT * FROM mind_map_hierarchy_edges WHERE rootSubjectId = :rootSubjectId AND parentNodeId = :parentNodeId ORDER BY confidenceWeight DESC"
+    )
     fun observeMindMapChildrenByParent(rootSubjectId: String, parentNodeId: String): Flow<List<MindMapHierarchyEntity>>
 
-    @Query("SELECT * FROM mind_map_hierarchy_edges WHERE rootSubjectId = :rootSubjectId AND hierarchyDepth = :depth ORDER BY confidenceWeight DESC")
+    @Query(
+        "SELECT * FROM mind_map_hierarchy_edges WHERE rootSubjectId = :rootSubjectId AND hierarchyDepth = :depth ORDER BY confidenceWeight DESC"
+    )
     fun observeMindMapNodesByDepth(rootSubjectId: String, depth: Int): Flow<List<MindMapHierarchyEntity>>
 
     @Query("SELECT * FROM mind_map_hierarchy_edges ORDER BY hierarchyDepth ASC, updatedAtMillis DESC LIMIT 150")
@@ -200,7 +210,6 @@ interface AegisDao {
         return deleteSubjectRow(subjectId)
     }
 
-
     // ------------------------------------------------------------------------
     // 5c. Append-only, hash-chained audit log (Phase 2)
     // ------------------------------------------------------------------------
@@ -276,7 +285,7 @@ abstract class AegisDatabase : RoomDatabase() {
 
     companion object {
         @Volatile
-        private var INSTANCE: AegisDatabase? = null
+        private var cachedInstance: AegisDatabase? = null
 
         const val DB_NAME = "aegis_blackvault.db"
 
@@ -368,21 +377,19 @@ abstract class AegisDatabase : RoomDatabase() {
             }
         }
 
-        fun getInstance(context: Context): AegisDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val appContext = context.applicationContext
-                val builder = Room.databaseBuilder(appContext, AegisDatabase::class.java, DB_NAME)
-                    // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
-                    .addMigrations(*ALL_MIGRATIONS)
-                    .addCallback(AUDIT_TRIGGERS_CALLBACK)
-                // Encryption at rest: converts an existing plaintext file once, then opens with SQLCipher.
-                DatabaseEncryption.prepare(appContext, DB_NAME)?.let { passphrase ->
-                    builder.openHelperFactory(SupportOpenHelperFactory(passphrase))
-                }
-                val instance = builder.build()
-                INSTANCE = instance
-                instance
+        fun getInstance(context: Context): AegisDatabase = cachedInstance ?: synchronized(this) {
+            val appContext = context.applicationContext
+            val builder = Room.databaseBuilder(appContext, AegisDatabase::class.java, DB_NAME)
+                // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
+                .addMigrations(*ALL_MIGRATIONS)
+                .addCallback(AUDIT_TRIGGERS_CALLBACK)
+            // Encryption at rest: converts an existing plaintext file once, then opens with SQLCipher.
+            DatabaseEncryption.prepare(appContext, DB_NAME)?.let { passphrase ->
+                builder.openHelperFactory(SupportOpenHelperFactory(passphrase))
             }
+            val instance = builder.build()
+            cachedInstance = instance
+            instance
         }
     }
 }
@@ -396,14 +403,11 @@ class AegisRepository(private val dao: AegisDao) {
     val tripletsFlow: Flow<List<KnowledgeTripletEntity>> = dao.observeTriplets()
     val patchesFlow: Flow<List<AstPatchEntity>> = dao.observeAstPatches()
 
-    fun observeRawEntitiesForSubject(subjectId: String): Flow<List<RawSocialMediaEntity>> =
-        dao.observeRawSocialEntitiesForSubject(subjectId)
+    fun observeRawEntitiesForSubject(subjectId: String): Flow<List<RawSocialMediaEntity>> = dao.observeRawSocialEntitiesForSubject(subjectId)
 
-    fun observeLinguisticProfileForSubject(subjectId: String): Flow<LinguisticPersonalityProfileEntity?> =
-        dao.observeLinguisticProfileForSubject(subjectId)
+    fun observeLinguisticProfileForSubject(subjectId: String): Flow<LinguisticPersonalityProfileEntity?> = dao.observeLinguisticProfileForSubject(subjectId)
 
-    fun observeMindMapHierarchyForSubject(rootSubjectId: String): Flow<List<MindMapHierarchyEntity>> =
-        dao.observeMindMapHierarchyForSubject(rootSubjectId)
+    fun observeMindMapHierarchyForSubject(rootSubjectId: String): Flow<List<MindMapHierarchyEntity>> = dao.observeMindMapHierarchyForSubject(rootSubjectId)
 
     class CrossProjectWriteException(message: String) : IllegalStateException(message)
 
@@ -430,13 +434,14 @@ class AegisRepository(private val dao: AegisDao) {
         // Single persistence choke point: restricted inferences are never stored for subjects
         // without recorded consent, no matter which screen or service produced the profile.
         @Suppress("NAME_SHADOWING")
-        val profile = ForensicMathEngine.applyConsentGate(profile.copy(projectId = owner))
+        val profile = ConsentGate.applyConsentGate(profile.copy(projectId = owner))
+
         @Suppress("NAME_SHADOWING")
         val triplets = triplets.map { it.copy(projectId = owner) }
         val subjectEntity = profile.toEntity()
         val rawEntities = profile.toRawSocialMediaEntities()
         val lingEntity = profile.toLinguisticProfileEntity()
-        val hierarchyEntities = ForensicMathEngine.buildMindMapHierarchyEntities(
+        val hierarchyEntities = MindMapEngine.buildMindMapHierarchyEntities(
             subject = profile,
             allSubjects = allProfiles,
             triplets = triplets
@@ -457,13 +462,12 @@ class AegisRepository(private val dao: AegisDao) {
     val recentAuditFlow: Flow<List<AuditLogEntity>> = dao.observeRecentAudit(200)
 
     /** Appends an audit entry. [detail] must never contain profile content or the subject's handle. */
-    suspend fun audit(action: AuditAction, subjectId: String?, detail: String): AuditLogEntity =
-        dao.appendAudit(
-            action = action.name,
-            subjectRef = AuditLogEntity.subjectRefFor(subjectId),
-            detail = detail.take(500),
-            nowMillis = System.currentTimeMillis()
-        )
+    suspend fun audit(action: AuditAction, subjectId: String?, detail: String): AuditLogEntity = dao.appendAudit(
+        action = action.name,
+        subjectRef = AuditLogEntity.subjectRefFor(subjectId),
+        detail = detail.take(500),
+        nowMillis = System.currentTimeMillis()
+    )
 
     /** Re-walks the whole chain and reports the first entry whose hash or link does not match. */
     suspend fun verifyAuditChain(): AuditChainStatus {
@@ -539,7 +543,7 @@ class AegisRepository(private val dao: AegisDao) {
     suspend fun createProject(name: String, nowMillis: Long = System.currentTimeMillis()): ProjectEntity {
         val clean = name.trim().take(60).ifBlank { "Untitled project" }
         val project = ProjectEntity(
-            id = "proj-" + ForensicMathEngine.sha256("$clean:$nowMillis:${System.nanoTime()}").take(12),
+            id = "proj-" + ForensicCommon.sha256("$clean:$nowMillis:${System.nanoTime()}").take(12),
             name = clean,
             createdAtMillis = nowMillis
         )
@@ -603,35 +607,35 @@ class AegisRepository(private val dao: AegisDao) {
 
         // Seed 1: NULL_ROUTER
         val nullArtifacts = listOf(
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-null-1",
                 platform = "GITHUB_COMMIT",
                 timestampIso = "2026-11-08T08:14:22Z",
                 verbatimText = "Enforce deterministic SHA-256 provenance verification across all distributed FalkorDB graph nodes before key rotation.",
                 contextLabel = "null-router/falkordb-osint-graphrag@993afx1"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-null-2",
                 platform = "GITHUB_PR_REVIEW",
                 timestampIso = "2026-11-07T11:42:09Z",
                 verbatimText = "We are committed to inclusive governance where every contributor is empowered across our distributed consensus architecture.",
                 contextLabel = "PR #44: Governance & Consensus Spec"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-null-3",
                 platform = "REDDIT_SHADOW_DOM",
                 timestampIso = "2026-11-06T16:05:48Z",
                 verbatimText = "These idiots actually bought the PR. Lock down the repo keys and purge anyone asking about the commits or shadow hydration leaks.",
                 contextLabel = "r/netsec // u/CipherVane_Public"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-null-4",
                 platform = "HUGGING_FACE_CARD",
                 timestampIso = "2026-11-04T14:29:31Z",
                 verbatimText = "Calibrated 50-word Burrows' Delta variance matrix paired with 384-d MiniLM embeddings for authorship attribution.",
                 contextLabel = "hf.co/Minej/bert-base-personality"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-null-5",
                 platform = "TIKTOK_REHYDRATION",
                 timestampIso = "2026-11-02T19:51:10Z",
@@ -640,8 +644,8 @@ class AegisRepository(private val dao: AegisDao) {
             )
         )
         val nullCorpus = nullArtifacts.joinToString(" ") { it.verbatimText }
-        val nullEval = ForensicMathEngine.evaluateCorpus(nullCorpus, repoCount = 14, hfCount = 5, followerCount = 840)
-        val nullChrono = ForensicMathEngine.evaluateChronoAndGeo(
+        val nullEval = StylometryEngine.evaluateCorpus(nullCorpus, repoCount = 14, hfCount = 5, followerCount = 840)
+        val nullChrono = ChronoGeoEngine.evaluateChronoAndGeo(
             listOf(7, 8, 8, 9, 10, 11, 11, 12, 13, 14, 15, 16, 16, 17, 18, 19, 20, 21),
             "Zürich, Switzerland"
         )
@@ -712,16 +716,25 @@ class AegisRepository(private val dao: AegisDao) {
                 tags = listOf("ner", "osint", "entity-extraction")
             )
         )
-        val nullHash = ForensicMathEngine.sha256("NULL_ROUTER:${nullEval.burrowsDelta}")
-        val nullLingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
-            "NULL_ROUTER", nullEval, nullChrono, nullArtifacts.size
+        val nullHash = ForensicCommon.sha256("NULL_ROUTER:${nullEval.burrowsDelta}")
+        val nullLingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
+            "NULL_ROUTER",
+            nullEval,
+            nullChrono,
+            nullArtifacts.size
         )
-        val nullInsights = ForensicMathEngine.synthesizeActionableInsights(
-            "NULL_ROUTER", nullEval, nullChrono, nullRepos, nullHf, "AST-PATCH-993AFX", nullLingProfile
+        val nullInsights = PlaybookEngine.synthesizeActionableInsights(
+            "NULL_ROUTER",
+            nullEval,
+            nullChrono,
+            nullRepos,
+            nullHf,
+            "AST-PATCH-993AFX",
+            nullLingProfile
         )
         val subjAlpha = SubjectProfile(
             id = "subj-alpha",
-            stixId = ForensicMathEngine.generateStixId("identity", "NULL_ROUTER"),
+            stixId = ForensicCommon.generateStixId("identity", "NULL_ROUTER"),
             handle = "NULL_ROUTER",
             codeId = "#993A-FX",
             alias = "CipherVane // Null_Architect_99",
@@ -756,21 +769,21 @@ class AegisRepository(private val dao: AegisDao) {
 
         // Seed 2: V_KOVACS
         val kovacsArtifacts = listOf(
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-kov-1",
                 platform = "GITHUB_COMMIT",
                 timestampIso = "2026-11-08T15:30:12Z",
                 verbatimText = "Calibrate sliding 6-hour minimum activity window over 24-hour UTC commit histograms to detect physical timezone drift.",
                 contextLabel = "v-kovacs/chronolocate-diurnal@771czx"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-kov-2",
                 platform = "GITHUB_ISSUE",
                 timestampIso = "2026-11-07T18:12:44Z",
                 verbatimText = "Excited to attend the regional transit infrastructure symposium and collaborate with the open-source security community!",
                 contextLabel = "Issue #12: Boston Meetup & Transit Telemetry"
             ),
-            ForensicMathEngine.createTimestampedArtifact(
+            StylometryEngine.createTimestampedArtifact(
                 id = "art-kov-3",
                 platform = "TELEGRAM_BRIDGE",
                 timestampIso = "2026-11-06T01:48:05Z",
@@ -779,8 +792,8 @@ class AegisRepository(private val dao: AegisDao) {
             )
         )
         val kovacsCorpus = kovacsArtifacts.joinToString(" ") { it.verbatimText }
-        val kovacsEval = ForensicMathEngine.evaluateCorpus(kovacsCorpus, repoCount = 8, hfCount = 3, followerCount = 310)
-        val kovacsChrono = ForensicMathEngine.evaluateChronoAndGeo(
+        val kovacsEval = StylometryEngine.evaluateCorpus(kovacsCorpus, repoCount = 8, hfCount = 3, followerCount = 310)
+        val kovacsChrono = ChronoGeoEngine.evaluateChronoAndGeo(
             listOf(12, 13, 14, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2),
             "Cambridge, MA"
         )
@@ -830,16 +843,25 @@ class AegisRepository(private val dao: AegisDao) {
                 tags = listOf("zero-shot", "nli", "intent-classification")
             )
         )
-        val kovacsHash = ForensicMathEngine.sha256("V_KOVACS:${kovacsEval.burrowsDelta}")
-        val kovacsLingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
-            "V_KOVACS", kovacsEval, kovacsChrono, kovacsArtifacts.size
+        val kovacsHash = ForensicCommon.sha256("V_KOVACS:${kovacsEval.burrowsDelta}")
+        val kovacsLingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
+            "V_KOVACS",
+            kovacsEval,
+            kovacsChrono,
+            kovacsArtifacts.size
         )
-        val kovacsInsights = ForensicMathEngine.synthesizeActionableInsights(
-            "V_KOVACS", kovacsEval, kovacsChrono, kovacsRepos, kovacsHf, "AST-PATCH-771CZX", kovacsLingProfile
+        val kovacsInsights = PlaybookEngine.synthesizeActionableInsights(
+            "V_KOVACS",
+            kovacsEval,
+            kovacsChrono,
+            kovacsRepos,
+            kovacsHf,
+            "AST-PATCH-771CZX",
+            kovacsLingProfile
         )
         val subjBeta = SubjectProfile(
             id = "subj-beta",
-            stixId = ForensicMathEngine.generateStixId("identity", "V_KOVACS"),
+            stixId = ForensicCommon.generateStixId("identity", "V_KOVACS"),
             handle = "V_KOVACS",
             codeId = "#771C-ZX",
             alias = "Kovacs_Actual // RedLine_Op",
@@ -909,7 +931,7 @@ class AegisRepository(private val dao: AegisDao) {
         saveProfile(subjAlpha, allSeeds, seedTriplets)
         saveProfile(subjBeta, allSeeds, emptyList())
 
-        val tiktokSpec = ForensicMathEngine.WALLED_GARDEN_CATALOG["tiktok"]!!
+        val tiktokSpec = WalledGardenCatalog.WALLED_GARDEN_CATALOG["tiktok"]!!
         dao.upsertAstPatch(
             AstPatchEntity(
                 platformKey = "tiktok",

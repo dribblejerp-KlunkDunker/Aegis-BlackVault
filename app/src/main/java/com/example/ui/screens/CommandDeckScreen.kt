@@ -28,7 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.ForensicMathEngine
+import com.example.engine.StylometryEngine
 import com.example.model.SubjectProfile
 import com.example.ui.theme.*
 import java.util.Locale
@@ -46,7 +46,7 @@ fun CommandDeckScreen(
     modifier: Modifier = Modifier
 ) {
     val spectrumBars = remember(activeSubject) {
-        ForensicMathEngine.computeSpectrumBars(activeSubject)
+        StylometryEngine.computeSpectrumBars(activeSubject)
     }
     val selectedBar = spectrumBars.find { it.token == selectedSpectrumToken } ?: spectrumBars.first()
 
@@ -233,7 +233,11 @@ fun CommandDeckScreen(
                     )
                 }
 
-                ThreatMetricBar(if (activeSubject.restrictedOutputsUnlocked) "Pathway to Escalation / Hostility" else "Pathway to Escalation (WITHHELD: consent required)", activeSubject.threatMetrics.pathwayToViolence, AlarmRed)
+                ThreatMetricBar(
+                    if (activeSubject.restrictedOutputsUnlocked) "Pathway to Escalation / Hostility" else "Pathway to Escalation (WITHHELD: consent required)",
+                    activeSubject.threatMetrics.pathwayToViolence,
+                    AlarmRed
+                )
                 ThreatMetricBar("Memetic Virality & Reach", activeSubject.threatMetrics.memeticVirality, AmberSignal)
                 ThreatMetricBar("Front/Back-Stage Context Collapse", activeSubject.threatMetrics.contextCollapse, PhosphorGreen)
                 ThreatMetricBar("GraphRAG Network Centrality", activeSubject.threatMetrics.networkCentrality, CyanTelemetry)
@@ -262,7 +266,9 @@ fun CommandDeckScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "TOKEN \"${selectedBar.token.uppercase(Locale.US)}\": Z=${if (selectedBar.zScore >= 0) "+${selectedBar.zScore}" else selectedBar.zScore}σ (${selectedBar.freqPct}%)",
+                        text = "TOKEN \"${selectedBar.token.uppercase(
+                            Locale.US
+                        )}\": Z=${if (selectedBar.zScore >= 0) "+${selectedBar.zScore}" else selectedBar.zScore}σ (${selectedBar.freqPct}%)",
                         color = AmberSignal,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
@@ -375,11 +381,7 @@ fun CommandDeckScreen(
 }
 
 @Composable
-private fun ThreatMetricBar(
-    label: String,
-    value: Int,
-    color: Color
-) {
+private fun ThreatMetricBar(label: String, value: Int, color: Color) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -406,10 +408,7 @@ private fun ThreatMetricBar(
 }
 
 @Composable
-private fun RadarMapWidget(
-    activeSubject: SubjectProfile,
-    modifier: Modifier = Modifier
-) {
+private fun RadarMapWidget(activeSubject: SubjectProfile, modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "radar_sweep")
     val sweepAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -468,11 +467,7 @@ private fun RadarMapWidget(
 }
 
 @Composable
-private fun DiurnalHistogramWidget(
-    hourlyBins: List<Int>,
-    troughLabel: String,
-    modifier: Modifier = Modifier
-) {
+private fun DiurnalHistogramWidget(hourlyBins: List<Int>, troughLabel: String, modifier: Modifier = Modifier) {
     val maxVal = (hourlyBins.maxOrNull() ?: 1).coerceAtLeast(1)
     Column(
         modifier = modifier,

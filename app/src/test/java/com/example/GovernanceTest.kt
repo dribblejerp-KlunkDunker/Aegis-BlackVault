@@ -5,7 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ConsentGate
 import com.example.model.AuditAction
 import com.example.model.AuditLogEntity
 import com.example.model.ConsentMethod
@@ -187,7 +187,7 @@ class GovernanceTest {
         val expired = active.copy(consentExpiresAt = now - 1)
         assertTrue(expired.consentExpired)
         assertFalse(expired.restrictedOutputsUnlocked)
-        assertTrue(ForensicMathEngine.applyConsentGate(expired).linguisticProfile.persuasionAndLeverageHooks.isEmpty())
+        assertTrue(ConsentGate.applyConsentGate(expired).linguisticProfile.persuasionAndLeverageHooks.isEmpty())
     }
 
     @Test

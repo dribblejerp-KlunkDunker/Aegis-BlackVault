@@ -45,25 +45,51 @@ class MigrationTest {
 
     private fun insertV3Rows(db: SupportSQLiteDatabase) {
         val subject = ContentValues().apply {
-            put("id", LEGACY_ID); put("stixId", "identity--legacy"); put("handle", LEGACY_HANDLE)
-            put("codeId", "LEG-1"); put("alias", "Legacy"); put("cluster", "pre-v4"); put("loc", "Unknown")
-            put("lat", 0.0); put("lon", 0.0); put("utcOffset", 0); put("troughWindowLabel", "")
-            put("burrowsDelta", 0.0); put("styloMatch", 0.0); put("mattrScore", 0.0)
+            put("id", LEGACY_ID)
+            put("stixId", "identity--legacy")
+            put("handle", LEGACY_HANDLE)
+            put("codeId", "LEG-1")
+            put("alias", "Legacy")
+            put("cluster", "pre-v4")
+            put("loc", "Unknown")
+            put("lat", 0.0)
+            put("lon", 0.0)
+            put("utcOffset", 0)
+            put("troughWindowLabel", "")
+            put("burrowsDelta", 0.0)
+            put("styloMatch", 0.0)
+            put("mattrScore", 0.0)
             listOf(
-                "oceanJson", "darkTriadJson", "threatMetricsJson", "zScoresJson", "insightsJson", "linguisticProfileJson"
+                "oceanJson",
+                "darkTriadJson",
+                "threatMetricsJson",
+                "zScoresJson",
+                "insightsJson",
+                "linguisticProfileJson"
             ).forEach { put(it, "{}") }
             listOf("hourlyBinsJson", "githubReposJson", "huggingFaceModelsJson", "artifactsJson").forEach { put(it, "[]") }
-            put("frontStageQuote", "hello"); put("backStageQuote", "world")
-            put("healedPatchId", ""); put("provSha256", "a".repeat(64)); put("updatedAt", 1_700_000_000_000L)
+            put("frontStageQuote", "hello")
+            put("backStageQuote", "world")
+            put("healedPatchId", "")
+            put("provSha256", "a".repeat(64))
+            put("updatedAt", 1_700_000_000_000L)
         }
         db.insert("subject_profiles", SQLiteDatabase.CONFLICT_FAIL, subject)
 
         val artifact = ContentValues().apply {
-            put("entityId", "art-legacy-1"); put("subjectId", LEGACY_ID); put("subjectHandle", LEGACY_HANDLE)
-            put("platform", "GITHUB"); put("sourceUri", "https://example.invalid/legacy")
-            put("postedTimestampIso", "2023-11-14T22:13:20Z"); put("utcHour", 22)
-            put("rawPayloadText", "legacy payload"); put("rawDomSignature", ""); put("lexicalMarkersCsv", "")
-            put("sentimentScore", 50); put("provSha256", "b".repeat(64)); put("ingestedAtMillis", 1_700_000_000_000L)
+            put("entityId", "art-legacy-1")
+            put("subjectId", LEGACY_ID)
+            put("subjectHandle", LEGACY_HANDLE)
+            put("platform", "GITHUB")
+            put("sourceUri", "https://example.invalid/legacy")
+            put("postedTimestampIso", "2023-11-14T22:13:20Z")
+            put("utcHour", 22)
+            put("rawPayloadText", "legacy payload")
+            put("rawDomSignature", "")
+            put("lexicalMarkersCsv", "")
+            put("sentimentScore", 50)
+            put("provSha256", "b".repeat(64))
+            put("ingestedAtMillis", 1_700_000_000_000L)
         }
         db.insert("raw_social_media_entities", SQLiteDatabase.CONFLICT_FAIL, artifact)
     }
@@ -147,7 +173,11 @@ class MigrationTest {
         // Room's own builder runs the last step (v5 -> v6), exactly as on a user's device.
         helper.createDatabase(dbName, 3).use { insertV3Rows(it) }
         helper.runMigrationsAndValidate(
-            dbName, 5, true, AegisDatabase.MIGRATION_3_4, AegisDatabase.MIGRATION_4_5
+            dbName,
+            5,
+            true,
+            AegisDatabase.MIGRATION_3_4,
+            AegisDatabase.MIGRATION_4_5
         ).close()
 
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -179,7 +209,8 @@ class MigrationTest {
         val db = Room.inMemoryDatabaseBuilder(context, AegisDatabase::class.java).allowMainThreadQueries().build()
         val (version, compiledHash) = db.openHelper.readableDatabase.let { sql ->
             sql.version to sql.query("SELECT identity_hash FROM room_master_table WHERE id = 42").use { c ->
-                c.moveToFirst(); c.getString(0)
+                c.moveToFirst()
+                c.getString(0)
             }
         }
         db.close()

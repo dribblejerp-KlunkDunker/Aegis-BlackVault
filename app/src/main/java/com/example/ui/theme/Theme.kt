@@ -28,9 +28,7 @@ private val AegisColorScheme = darkColorScheme(
 )
 
 @Composable
-fun MyApplicationTheme(
-    content: @Composable () -> Unit
-) {
+fun MyApplicationTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = AegisColorScheme,
         typography = Typography,

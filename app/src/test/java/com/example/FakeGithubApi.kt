@@ -1,12 +1,12 @@
 package com.example
 
+import java.io.IOException
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
-import java.io.IOException
 
 /**
  * Canned GitHub REST responses for hermetic scraper tests. Nothing here touches the network.
@@ -38,31 +38,35 @@ object FakeGithubApi {
     """.trimIndent()
 
     fun client(): OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(Interceptor { chain ->
-            val request = chain.request()
-            val url = request.url
-            requestedUrls.add(url.toString())
-            val body: String? = when {
-                url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN" -> user
-                url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/repos" -> repos
-                url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/events/public" -> events
-                else -> null
+        .addInterceptor(
+            Interceptor { chain ->
+                val request = chain.request()
+                val url = request.url
+                requestedUrls.add(url.toString())
+                val body: String? = when {
+                    url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN" -> user
+                    url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/repos" -> repos
+                    url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/events/public" -> events
+                    else -> null
+                }
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(if (body != null) 200 else 404)
+                    .message(if (body != null) "OK" else "Not Found")
+                    .body((body ?: """{"message":"Not Found"}""").toResponseBody("application/json".toMediaType()))
+                    .build()
             }
-            Response.Builder()
-                .request(request)
-                .protocol(Protocol.HTTP_1_1)
-                .code(if (body != null) 200 else 404)
-                .message(if (body != null) "OK" else "Not Found")
-                .body((body ?: """{"message":"Not Found"}""").toResponseBody("application/json".toMediaType()))
-                .build()
-        })
+        )
         .build()
 
     /** A client whose every request fails, to simulate being offline or blocked. */
     fun offlineClient(): OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(Interceptor { chain ->
-            requestedUrls.add(chain.request().url.toString())
-            throw IOException("simulated offline")
-        })
+        .addInterceptor(
+            Interceptor { chain ->
+                requestedUrls.add(chain.request().url.toString())
+                throw IOException("simulated offline")
+            }
+        )
         .build()
 }

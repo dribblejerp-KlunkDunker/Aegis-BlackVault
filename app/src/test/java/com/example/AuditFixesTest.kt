@@ -5,7 +5,9 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ChronoGeoEngine
+import com.example.engine.ConsentGate
+import com.example.engine.StylometryEngine
 import com.example.model.ConsentStatus
 import com.example.model.DataSufficiency
 import com.example.model.ScraperPlatformMode
@@ -119,9 +121,9 @@ class AuditFixesTest {
         assertEquals(0, domain.darkTriad.narcissism)
         assertEquals(0, domain.darkTriad.psychopathy)
         assertEquals(0, domain.threatMetrics.pathwayToViolence)
-        assertEquals(ForensicMathEngine.RESTRICTED_LABEL, domain.troughWindowLabel)
-        assertEquals(ForensicMathEngine.RESTRICTED_LABEL, domain.loc)
-        assertTrue(domain.actionableInsights.none { it.category in ForensicMathEngine.RESTRICTED_INSIGHT_CATEGORIES })
+        assertEquals(ConsentGate.RESTRICTED_LABEL, domain.troughWindowLabel)
+        assertEquals(ConsentGate.RESTRICTED_LABEL, domain.loc)
+        assertTrue(domain.actionableInsights.none { it.category in ConsentGate.RESTRICTED_INSIGHT_CATEGORIES })
     }
 
     @Test
@@ -135,7 +137,7 @@ class AuditFixesTest {
         assertTrue(unlocked.linguisticProfile.persuasionAndLeverageHooks.isNotEmpty())
 
         // Switching back to UNVERIFIED strips them again.
-        val relocked = ForensicMathEngine.applyConsentGate(unlocked.copy(consentStatus = ConsentStatus.UNVERIFIED))
+        val relocked = ConsentGate.applyConsentGate(unlocked.copy(consentStatus = ConsentStatus.UNVERIFIED))
         assertTrue(relocked.linguisticProfile.persuasionAndLeverageHooks.isEmpty())
     }
 
@@ -150,29 +152,31 @@ class AuditFixesTest {
     @Test
     fun `stylometry is withheld below the minimum corpus and scores have no artificial floors`() {
         val shortText = "We must verify the benchmark before merging. The trace looks clean."
-        val eval = ForensicMathEngine.evaluateCorpus(shortText, repoCount = 0, hfCount = 0, followerCount = 0)
+        val eval = StylometryEngine.evaluateCorpus(shortText, repoCount = 0, hfCount = 0, followerCount = 0)
 
         assertTrue(eval.tokenCount < DataSufficiency.MIN_WORDS_FOR_STYLOMETRY)
         assertEquals(0.0, eval.burrowsDelta, 0.0)
         assertEquals(0.0, eval.styloMatchPct, 0.0)
         listOf(
-            eval.darkTriad.machiavellianism, eval.darkTriad.narcissism, eval.darkTriad.psychopathy,
+            eval.darkTriad.machiavellianism,
+            eval.darkTriad.narcissism,
+            eval.darkTriad.psychopathy,
             eval.threatMetrics.pathwayToViolence
         ).forEach { assertTrue(it in 0..100) }
 
-        val empty = ForensicMathEngine.evaluateCorpus("", repoCount = 0, hfCount = 0, followerCount = 0)
+        val empty = StylometryEngine.evaluateCorpus("", repoCount = 0, hfCount = 0, followerCount = 0)
         assertEquals(0, empty.tokenCount)
     }
 
     @Test
     fun `activity window needs real timestamps and never invents coordinates`() {
-        val tooFew = ForensicMathEngine.evaluateChronoAndGeo(listOf(9, 10, 11), null)
+        val tooFew = ChronoGeoEngine.evaluateChronoAndGeo(listOf(9, 10, 11), null)
         assertTrue(tooFew.windowLabel.startsWith("INSUFFICIENT TIMESTAMPS"))
         assertEquals(0.0, tooFew.lat, 0.0)
         assertEquals(0.0, tooFew.lon, 0.0)
         assertEquals(3, tooFew.hourlyBins.sum())
 
-        val enough = ForensicMathEngine.evaluateChronoAndGeo((8..21).toList(), null)
+        val enough = ChronoGeoEngine.evaluateChronoAndGeo((8..21).toList(), null)
         assertEquals(0.0, enough.lat, 0.0)
     }
 

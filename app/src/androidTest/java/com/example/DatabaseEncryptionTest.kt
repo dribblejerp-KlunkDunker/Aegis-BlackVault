@@ -8,10 +8,13 @@ import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
 import com.example.data.DatabaseEncryption
 import com.example.model.AuditAction
+import java.io.File
+import java.security.SecureRandom
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,9 +23,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.json.JSONObject
-import java.io.File
-import java.security.SecureRandom
 
 /**
  * Runs on a real device or emulator (SQLCipher's native library cannot load under Robolectric).
@@ -41,22 +41,21 @@ class DatabaseEncryptionTest {
     }
 
     @Before fun setUp() = wipe()
+
     @After fun tearDown() = wipe()
 
-    private fun open(name: String, passphrase: ByteArray?): AegisDatabase =
-        Room.databaseBuilder(context, AegisDatabase::class.java, name)
-            .addMigrations(*AegisDatabase.ALL_MIGRATIONS)
-            .addCallback(AegisDatabase.AUDIT_TRIGGERS_CALLBACK)
-            .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
-            .allowMainThreadQueries()
-            .build()
+    private fun open(name: String, passphrase: ByteArray?): AegisDatabase = Room.databaseBuilder(context, AegisDatabase::class.java, name)
+        .addMigrations(*AegisDatabase.ALL_MIGRATIONS)
+        .addCallback(AegisDatabase.AUDIT_TRIGGERS_CALLBACK)
+        .apply { passphrase?.let { openHelperFactory(SupportOpenHelperFactory(it)) } }
+        .allowMainThreadQueries()
+        .build()
 
     /** Prepares [name] and fails with the real conversion error instead of a bare null. */
-    private fun prepareOrFail(name: String): ByteArray =
-        DatabaseEncryption.prepare(context, name) ?: throw AssertionError(
-            "conversion failed (${DatabaseEncryption.status}): " +
-                DatabaseEncryption.lastConversionError?.stackTraceToString()
-        )
+    private fun prepareOrFail(name: String): ByteArray = DatabaseEncryption.prepare(context, name) ?: throw AssertionError(
+        "conversion failed (${DatabaseEncryption.status}): " +
+            DatabaseEncryption.lastConversionError?.stackTraceToString()
+    )
 
     /**
      * Builds a plaintext database exactly as a v3 install left it, from the committed schema
@@ -158,7 +157,9 @@ class DatabaseEncryptionTest {
         val name = "enc-v3.db"
         createV3Plaintext(name)
         android.database.sqlite.SQLiteDatabase.openDatabase(
-            context.getDatabasePath(name).path, null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
+            context.getDatabasePath(name).path,
+            null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
         ).use { db ->
             db.execSQL(
                 "INSERT INTO knowledge_triplets (id, subjectHandle, predicate, objectNode, nodeCategory, confidence, provSha256, timestamp) " +

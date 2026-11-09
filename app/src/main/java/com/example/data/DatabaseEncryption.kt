@@ -4,8 +4,8 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.example.security.DatabaseKeyManager
-import net.zetetic.database.sqlcipher.SQLiteDatabase
 import java.io.File
+import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /**
  * Encryption at rest for the dossier database (SQLCipher 4, AES-256, 4 KiB pages, HMAC-SHA512).
@@ -56,10 +56,12 @@ object DatabaseEncryption {
         get() = Build.FINGERPRINT == "robolectric"
 
     fun loadNativeLibrary() {
-        if (!nativeLoaded) synchronized(this) {
-            if (!nativeLoaded) {
-                System.loadLibrary("sqlcipher")
-                nativeLoaded = true
+        if (!nativeLoaded) {
+            synchronized(this) {
+                if (!nativeLoaded) {
+                    System.loadLibrary("sqlcipher")
+                    nativeLoaded = true
+                }
             }
         }
     }
@@ -80,8 +82,7 @@ object DatabaseEncryption {
     }
 
     /** SQLCipher raw-key form (skips the passphrase KDF; the key is already 256 random bits). */
-    fun rawKeyPassphrase(key: ByteArray): ByteArray =
-        ("x'" + key.joinToString("") { "%02X".format(it) } + "'").toByteArray(Charsets.US_ASCII)
+    fun rawKeyPassphrase(key: ByteArray): ByteArray = ("x'" + key.joinToString("") { "%02X".format(it) } + "'").toByteArray(Charsets.US_ASCII)
 
     /**
      * Returns the passphrase Room should open [dbName] with, or null if the database must be opened
@@ -144,7 +145,9 @@ object DatabaseEncryption {
         sidecars(tmp).forEach { it.delete() }
 
         val plain = android.database.sqlite.SQLiteDatabase.openDatabase(
-            dbFile.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            dbFile.path,
+            null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READONLY
         )
         val expected: Map<String, Long>
         val userVersion: Int
@@ -220,7 +223,8 @@ object DatabaseEncryption {
             }
             // AUTOINCREMENT counters, so the next audit_log seq continues where it left off.
             val hasSequence = plain.rawQuery(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'", null
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
+                null
             ).use { it.moveToFirst() }
             if (hasSequence) {
                 plain.rawQuery("SELECT name, seq FROM sqlite_sequence", null).use { c ->
@@ -249,8 +253,10 @@ object DatabaseEncryption {
                 tmp.delete()
                 backup.renameTo(dbFile)
             }
+
             // Swap finished but the plaintext backup was not removed yet.
             dbFile.exists() && !isPlaintextSqlite(dbFile) && backup.exists() -> backup.delete()
+
             // Killed while writing the copy: discard the partial copy.
             else -> tmp.delete()
         }
@@ -272,7 +278,8 @@ object DatabaseEncryption {
         }
         return tables.filter { it !in INTERNAL_TABLES }.sorted().associateWith { table ->
             query("SELECT COUNT(*) FROM `${table.replace("`", "``")}`").use { c ->
-                c.moveToFirst(); c.getLong(0)
+                c.moveToFirst()
+                c.getLong(0)
             }
         }
     }

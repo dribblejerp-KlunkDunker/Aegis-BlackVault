@@ -21,12 +21,10 @@ object AppLock {
     private const val KEY_ENABLED = "app_lock_enabled"
     const val AUTHENTICATORS = BIOMETRIC_WEAK or DEVICE_CREDENTIAL
 
-    fun isEnabled(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
+    fun isEnabled(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
 
     /** True when the device has a biometric or a screen lock the app can ask for. */
-    fun isAvailable(context: Context): Boolean =
-        BiometricManager.from(context).canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+    fun isAvailable(context: Context): Boolean = BiometricManager.from(context).canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
 
     /**
      * Enables or disables the lock. Enabling is refused (returns false) when the device has no

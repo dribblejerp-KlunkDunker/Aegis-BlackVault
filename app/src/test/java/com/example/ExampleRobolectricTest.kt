@@ -289,7 +289,7 @@ class ExampleRobolectricTest {
         )
 
         // 1. Corpus-level Sovereign VERDAD assessment
-        val corpusAssessment = com.example.engine.ForensicMathEngine.evaluateSovereignVerdad(activeSubject)
+        val corpusAssessment = com.example.engine.VerdadEngine.evaluateSovereignVerdad(activeSubject)
         assertTrue(corpusAssessment.manipulationRisk in 0..100)
         assertTrue(
             corpusAssessment.recommendationGate.startsWith("ALLOW") ||
@@ -306,7 +306,7 @@ class ExampleRobolectricTest {
 
         // 2. High-bait draft sandbox evaluation (verdad-service.shouldShare)
         val highBaitDraft = "BREAKING: Share before deleted!! Wake up sheep, they don't want you to know the secret agenda coverup! Everyone knows either we act now or we will be destroyed!"
-        val sandboxAssessment = com.example.engine.ForensicMathEngine.evaluateSovereignVerdad(
+        val sandboxAssessment = com.example.engine.VerdadEngine.evaluateSovereignVerdad(
             subject = activeSubject,
             customDraftText = highBaitDraft
         )
@@ -318,4 +318,3 @@ class ExampleRobolectricTest {
         assertTrue(sandboxAssessment.detectedFallacies.isNotEmpty())
     }
 }
-

@@ -2,12 +2,23 @@ package com.example.network
 
 import android.util.Log
 import com.example.BuildConfig
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ChronoGeoEngine
+import com.example.engine.ExportEngine
+import com.example.engine.ForensicCommon
+import com.example.engine.MindMapEngine
+import com.example.engine.PlaybookEngine
+import com.example.engine.StylometryEngine
+import com.example.engine.VerdadEngine
 import com.example.model.*
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.generationConfig
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -21,11 +32,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
-import java.util.concurrent.TimeUnit
 
 private const val TAG = "MultiAiPortability"
 
@@ -86,12 +92,11 @@ class MultiAiAndDataPortabilityService {
      * For subjects without recorded consent it tells the model not to regenerate the restricted outputs
      * that the app itself withholds.
      */
-    fun consentPreamble(subject: SubjectProfile): String =
-        if (subject.restrictedOutputsUnlocked) {
-            "AEGIS POLICY: consent=${subject.consentStatus.name}; data quality: ${subject.dataQualityLabel}. Scores are heuristic estimates, not validated psychometric instruments; say so where relevant."
-        } else {
-            "AEGIS POLICY: consent=UNVERIFIED; data quality: ${subject.dataQualityLabel}. The person described has not consented to profiling. Do NOT produce persuasion or leverage tactics, exploitable biases, rapport or manipulation scripts, personality-disorder or Dark Triad judgments, violence-risk estimates, or inferences about their location, schedule or sleep. Limit the answer to a factual, sourced summary of the collected public material and its reliability."
-        }
+    fun consentPreamble(subject: SubjectProfile): String = if (subject.restrictedOutputsUnlocked) {
+        "AEGIS POLICY: consent=${subject.consentStatus.name}; data quality: ${subject.dataQualityLabel}. Scores are heuristic estimates, not validated psychometric instruments; say so where relevant."
+    } else {
+        "AEGIS POLICY: consent=UNVERIFIED; data quality: ${subject.dataQualityLabel}. The person described has not consented to profiling. Do NOT produce persuasion or leverage tactics, exploitable biases, rapport or manipulation scripts, personality-disorder or Dark Triad judgments, violence-risk estimates, or inferences about their location, schedule or sleep. Limit the answer to a factual, sourced summary of the collected public material and its reliability."
+    }
 
     private fun isConfiguredSecretKey(candidate: String): Boolean {
         val trimmed = candidate.trim()
@@ -109,10 +114,7 @@ class MultiAiAndDataPortabilityService {
      * 2. AI Studio Secrets (`BuildConfig.GEMINI_API_KEY`, `BuildConfig.ANTHROPIC_API_KEY`, `BuildConfig.PERPLEXITY_API_KEY`)
      * 3. For Gemini: Firebase AI Logic (`Firebase.ai` with App Check attestation) when no explicit Gemini key is set.
      */
-    fun resolveApiKeyAndSource(
-        provider: AiProviderEngine,
-        inAppKeyOverride: String = ""
-    ): Pair<String, String> {
+    fun resolveApiKeyAndSource(provider: AiProviderEngine, inAppKeyOverride: String = ""): Pair<String, String> {
         if (isConfiguredSecretKey(inAppKeyOverride)) {
             return inAppKeyOverride.trim() to "IN-APP KEY VAULT"
         }
@@ -185,7 +187,10 @@ class MultiAiAndDataPortabilityService {
                             emit(directResult)
                             return@flow
                         } else if (directResult is AiSynthesisState.Error) {
-                            Log.w(TAG, "Direct Gemini API returned notice (${directResult.errorMessage}), attempting Firebase AI Logic fallback...")
+                            Log.w(
+                                TAG,
+                                "Direct Gemini API returned notice (${directResult.errorMessage}), attempting Firebase AI Logic fallback..."
+                            )
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -357,12 +362,7 @@ class MultiAiAndDataPortabilityService {
         }
     }
 
-    private fun callDirectGeminiRestApi(
-        apiKey: String,
-        modelId: String,
-        prompt: String,
-        authSourceLabel: String
-    ): AiSynthesisState {
+    private fun callDirectGeminiRestApi(apiKey: String, modelId: String, prompt: String, authSourceLabel: String): AiSynthesisState {
         val cleanModel = modelId.removePrefix("models/").trim()
         // Key goes in the x-goog-api-key header, never the URL (URLs end up in proxy and server logs).
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
@@ -448,7 +448,8 @@ class MultiAiAndDataPortabilityService {
             put("max_tokens", 1400)
             put(
                 "system",
-                "You are a careful psycholinguistic and open-source research analyst inside Aegis Blackvault. Analyze the provided XML dossier and be explicit about data quality and uncertainty. " + consentPreamble(subject)
+                "You are a careful psycholinguistic and open-source research analyst inside Aegis Blackvault. Analyze the provided XML dossier and be explicit about data quality and uncertainty. " +
+                    consentPreamble(subject)
             )
             put(
                 "messages",
@@ -523,7 +524,8 @@ class MultiAiAndDataPortabilityService {
                             put("role", "system")
                             put(
                                 "content",
-                                "You verify public technical footprints (repositories, publications, models) with citations. " + consentPreamble(subject)
+                                "You verify public technical footprints (repositories, publications, models) with citations. " +
+                                    consentPreamble(subject)
                             )
                         }
                     )
@@ -590,10 +592,7 @@ class MultiAiAndDataPortabilityService {
      * (e.g., pasted Claude/Perplexity/Gemini outputs, interview transcripts, or OSINT notes) into
      * structured timestamped artifacts and merges them into the active SubjectProfile!
      */
-    suspend fun importUnstructuredTextWithGemini(
-        rawText: String,
-        activeSubject: SubjectProfile
-    ): ImportedDossierResult = withContext(Dispatchers.IO) {
+    suspend fun importUnstructuredTextWithGemini(rawText: String, activeSubject: SubjectProfile): ImportedDossierResult = withContext(Dispatchers.IO) {
         try {
             val response = withTimeout(60_000L) {
                 geminiStructuredImportModel.generateContent(
@@ -609,7 +608,7 @@ class MultiAiAndDataPortabilityService {
                 val text = item.optString("verbatimText").trim()
                 if (text.isNotBlank()) {
                     extractedItems.add(
-                        ForensicMathEngine.createTimestampedArtifact(
+                        StylometryEngine.createTimestampedArtifact(
                             id = "art-gemini-imp-$i-${System.nanoTime()}",
                             platform = item.optString("platform", "GEMINI_IMPORT").uppercase(Locale.US),
                             timestampIso = item.optString("timestampIso", currentIsoUtc()).ifBlank { currentIsoUtc() },
@@ -649,23 +648,27 @@ class MultiAiAndDataPortabilityService {
         lingEntities: List<LinguisticPersonalityProfileEntity>,
         hierarchyEntities: List<MindMapHierarchyEntity>,
         customDirective: String = ""
-    ): String {
-        return when (format) {
-            DataExportFormat.AGENT_HANDOFF -> buildAgentHandoffBundleJson(
-                subject = subject,
-                astPatches = astPatches,
-                rawEntities = rawEntities,
-                lingEntities = lingEntities,
-                hierarchyEntities = hierarchyEntities,
-                customDirective = customDirective
-            )
-            DataExportFormat.PKZIP_STIX -> ForensicMathEngine.buildStix21BundleJson(subject, astPatches)
-            DataExportFormat.ROOM_JSON -> buildRoomDossierJson(subject, rawEntities, lingEntities, hierarchyEntities)
-            DataExportFormat.DISCOURSE_CSV -> buildDiscourseCsv(subject)
-            DataExportFormat.CLAUDE_XML -> buildClaudeXmlBundle(subject, customDirective)
-            DataExportFormat.GEMINI_PROMPT -> buildGeminiMarkdownContext(subject, customDirective)
-            DataExportFormat.PERPLEXITY_QUERY -> buildPerplexitySearchBundle(subject, customDirective)
-        }
+    ): String = when (format) {
+        DataExportFormat.AGENT_HANDOFF -> buildAgentHandoffBundleJson(
+            subject = subject,
+            astPatches = astPatches,
+            rawEntities = rawEntities,
+            lingEntities = lingEntities,
+            hierarchyEntities = hierarchyEntities,
+            customDirective = customDirective
+        )
+
+        DataExportFormat.PKZIP_STIX -> ExportEngine.buildStix21BundleJson(subject, astPatches)
+
+        DataExportFormat.ROOM_JSON -> buildRoomDossierJson(subject, rawEntities, lingEntities, hierarchyEntities)
+
+        DataExportFormat.DISCOURSE_CSV -> buildDiscourseCsv(subject)
+
+        DataExportFormat.CLAUDE_XML -> buildClaudeXmlBundle(subject, customDirective)
+
+        DataExportFormat.GEMINI_PROMPT -> buildGeminiMarkdownContext(subject, customDirective)
+
+        DataExportFormat.PERPLEXITY_QUERY -> buildPerplexitySearchBundle(subject, customDirective)
     }
 
     /**
@@ -683,9 +686,9 @@ class MultiAiAndDataPortabilityService {
         hierarchyEntities: List<MindMapHierarchyEntity>,
         customDirective: String = ""
     ): String {
-        val verdad = ForensicMathEngine.evaluateSovereignVerdad(subject)
+        val verdad = VerdadEngine.evaluateSovereignVerdad(subject)
         val roomDossier = JSONObject(buildRoomDossierJson(subject, rawEntities, lingEntities, hierarchyEntities))
-        val stixBundle = JSONObject(ForensicMathEngine.buildStix21BundleJson(subject, astPatches))
+        val stixBundle = JSONObject(ExportEngine.buildStix21BundleJson(subject, astPatches))
 
         return JSONObject().apply {
             put("handoff_protocol", "AEGIS_BLACKVAULT_SOVEREIGN_AGENT_HANDOFF_V1")
@@ -737,7 +740,7 @@ class MultiAiAndDataPortabilityService {
         val subjectLing = lingEntities.find { it.subjectId == subject.id }
             ?: subject.toLinguisticProfileEntity()
         val subjectHierarchy = hierarchyEntities.filter { it.rootSubjectId == subject.id }
-            .ifEmpty { ForensicMathEngine.buildMindMapHierarchyEntities(subject) }
+            .ifEmpty { MindMapEngine.buildMindMapHierarchyEntities(subject) }
 
         return JSONObject().apply {
             put("aegis_schema_version", "3.5")
@@ -839,18 +842,28 @@ class MultiAiAndDataPortabilityService {
         }
         return buildString {
             appendLine("<!-- ${consentPreamble(subject)} -->")
-            appendLine("<aegis_osint_dossier schema=\"3.6\" target=\"${subject.handle}\" consent=\"${subject.consentStatus.name}\" data_quality=\"${subject.dataQualityLabel}\">")
+            appendLine(
+                "<aegis_osint_dossier schema=\"3.6\" target=\"${subject.handle}\" consent=\"${subject.consentStatus.name}\" data_quality=\"${subject.dataQualityLabel}\">"
+            )
             appendLine("  <identity>")
             appendLine("    <handle>${subject.handle}</handle>")
             appendLine("    <alias>${subject.alias}</alias>")
             appendLine("    <location utc_offset=\"${subject.utcOffset}\">${subject.loc}</location>")
             appendLine("    <diurnal_sleep_trough>${subject.troughWindowLabel}</diurnal_sleep_trough>")
-            appendLine("    <stylometry burrows_delta=\"${subject.burrowsDelta}\" match_pct=\"${subject.styloMatch}\" mattr=\"${subject.mattrScore}\" />")
+            appendLine(
+                "    <stylometry burrows_delta=\"${subject.burrowsDelta}\" match_pct=\"${subject.styloMatch}\" mattr=\"${subject.mattrScore}\" />"
+            )
             appendLine("  </identity>")
             appendLine("  <psychometric_profile archetype=\"${lp.archetypeTitle}\">")
-            appendLine("    <ocean O=\"${subject.ocean.O}\" C=\"${subject.ocean.C}\" E=\"${subject.ocean.E}\" A=\"${subject.ocean.A}\" N=\"${subject.ocean.N}\" />")
-            appendLine("    <dark_triad machiavellianism=\"${subject.darkTriad.machiavellianism}\" narcissism=\"${subject.darkTriad.narcissism}\" psychopathy=\"${subject.darkTriad.psychopathy}\" />")
-            appendLine("    <pennebaker_liwc ati=\"${lp.analyticalThinkingIndex}\" clout=\"${lp.cloutDominanceIndex}\" authenticity=\"${lp.authenticityIndex}\" tone=\"${lp.emotionalToneIndex}\" i_rate=\"${lp.iPronounRatePct}\" we_rate=\"${lp.wePronounRatePct}\" />")
+            appendLine(
+                "    <ocean O=\"${subject.ocean.O}\" C=\"${subject.ocean.C}\" E=\"${subject.ocean.E}\" A=\"${subject.ocean.A}\" N=\"${subject.ocean.N}\" />"
+            )
+            appendLine(
+                "    <dark_triad machiavellianism=\"${subject.darkTriad.machiavellianism}\" narcissism=\"${subject.darkTriad.narcissism}\" psychopathy=\"${subject.darkTriad.psychopathy}\" />"
+            )
+            appendLine(
+                "    <pennebaker_liwc ati=\"${lp.analyticalThinkingIndex}\" clout=\"${lp.cloutDominanceIndex}\" authenticity=\"${lp.authenticityIndex}\" tone=\"${lp.emotionalToneIndex}\" i_rate=\"${lp.iPronounRatePct}\" we_rate=\"${lp.wePronounRatePct}\" />"
+            )
             appendLine("    <what_makes_them_tick>")
             lp.whatMakesThemTick.forEach { appendLine("      <driver>$it</driver>") }
             appendLine("    </what_makes_them_tick>")
@@ -863,7 +876,9 @@ class MultiAiAndDataPortabilityService {
             appendLine("  </psychometric_profile>")
             appendLine("  <timestamped_evidence count=\"${subject.scrapedArtifacts.size}\">")
             subject.scrapedArtifacts.take(12).forEach { art ->
-                appendLine("    <statement id=\"${art.id}\" platform=\"${art.platform}\" timestamp=\"${art.timestampIso}\" tone=\"${art.sentimentScore}\">${art.verbatimText}</statement>")
+                appendLine(
+                    "    <statement id=\"${art.id}\" platform=\"${art.platform}\" timestamp=\"${art.timestampIso}\" tone=\"${art.sentimentScore}\">${art.verbatimText}</statement>"
+                )
             }
             appendLine("  </timestamped_evidence>")
             appendLine("  <analyst_directive>$directive</analyst_directive>")
@@ -890,10 +905,18 @@ class MultiAiAndDataPortabilityService {
             appendLine("- **Subject**: `${subject.handle}` (${subject.alias})")
             appendLine("- **Archetype**: ${lp.archetypeTitle} — ${lp.archetypeSummary}")
             appendLine("- **Chronolocation**: ${subject.loc} | Sleep Trough: ${subject.troughWindowLabel}")
-            appendLine("- **Stylometry**: 50-Word Calibrated Burrows' Delta Δ=${subject.burrowsDelta} (${subject.styloMatch}% Match) | MATTR=${subject.mattrScore}")
-            appendLine("- **Big Five OCEAN**: O=${subject.ocean.O}%, C=${subject.ocean.C}%, E=${subject.ocean.E}%, A=${subject.ocean.A}%, N=${subject.ocean.N}%")
-            appendLine("- **Dark Triad**: Machiavellianism=${subject.darkTriad.machiavellianism}%, Narcissism=${subject.darkTriad.narcissism}%, Psychopathy=${subject.darkTriad.psychopathy}%")
-            appendLine("- **Pennebaker LIWC**: ATI=${lp.analyticalThinkingIndex}%, Clout=${lp.cloutDominanceIndex}%, Authenticity=${lp.authenticityIndex}%, Tone=${lp.emotionalToneIndex}%")
+            appendLine(
+                "- **Stylometry**: 50-Word Calibrated Burrows' Delta Δ=${subject.burrowsDelta} (${subject.styloMatch}% Match) | MATTR=${subject.mattrScore}"
+            )
+            appendLine(
+                "- **Big Five OCEAN**: O=${subject.ocean.O}%, C=${subject.ocean.C}%, E=${subject.ocean.E}%, A=${subject.ocean.A}%, N=${subject.ocean.N}%"
+            )
+            appendLine(
+                "- **Dark Triad**: Machiavellianism=${subject.darkTriad.machiavellianism}%, Narcissism=${subject.darkTriad.narcissism}%, Psychopathy=${subject.darkTriad.psychopathy}%"
+            )
+            appendLine(
+                "- **Pennebaker LIWC**: ATI=${lp.analyticalThinkingIndex}%, Clout=${lp.cloutDominanceIndex}%, Authenticity=${lp.authenticityIndex}%, Tone=${lp.emotionalToneIndex}%"
+            )
             appendLine()
             appendLine("## Timestamped Scraped Discourse")
             subject.scrapedArtifacts.take(10).forEach { art ->
@@ -922,7 +945,9 @@ class MultiAiAndDataPortabilityService {
             appendLine("Known GitHub Repositories: $repoNames")
             appendLine("Known Hugging Face Assets: $hfNames")
             appendLine("Inferred Chronolocation: ${subject.loc} (${subject.troughWindowLabel})")
-            appendLine("Psycholinguistic Signature: ${subject.linguisticProfile.archetypeTitle} (ATI=${subject.linguisticProfile.analyticalThinkingIndex}%, Clout=${subject.linguisticProfile.cloutDominanceIndex}%)")
+            appendLine(
+                "Psycholinguistic Signature: ${subject.linguisticProfile.archetypeTitle} (ATI=${subject.linguisticProfile.analyticalThinkingIndex}%, Clout=${subject.linguisticProfile.cloutDominanceIndex}%)"
+            )
             appendLine()
             appendLine("Task: $directive")
             appendLine("1. Corroborate recent public commits, releases, papers, or forum discussions tied to these repositories/models.")
@@ -940,10 +965,7 @@ class MultiAiAndDataPortabilityService {
      * CSV, Claude XML, or raw timestamped lines), merges the extracted statements into the active
      * subject dossier, and recomputes the full Pennebaker LIWC + Burrows' Delta + Mind Map hierarchy.
      */
-    fun parseAndImportData(
-        rawPayload: String,
-        activeSubject: SubjectProfile
-    ): ImportedDossierResult {
+    fun parseAndImportData(rawPayload: String, activeSubject: SubjectProfile): ImportedDossierResult {
         val trimmed = rawPayload.trim()
         if (trimmed.isBlank()) {
             return ImportedDossierResult(
@@ -971,7 +993,7 @@ class MultiAiAndDataPortabilityService {
                                 val text = r.optString("rawPayloadText", r.optString("verbatimText", "")).trim()
                                 if (text.isNotBlank()) {
                                     newArtifacts.add(
-                                        ForensicMathEngine.createTimestampedArtifact(
+                                        StylometryEngine.createTimestampedArtifact(
                                             id = r.optString("entityId", "art-imp-json-$i-${System.nanoTime()}"),
                                             platform = r.optString("platform", "IMPORTED_JSON"),
                                             timestampIso = r.optString("postedTimestampIso", currentIsoUtc()),
@@ -998,7 +1020,7 @@ class MultiAiAndDataPortabilityService {
                                     val plat = stixObj.optString("x_platform", "STIX_${stixType.uppercase(Locale.US)}")
                                     if (text.isNotBlank()) {
                                         newArtifacts.add(
-                                            ForensicMathEngine.createTimestampedArtifact(
+                                            StylometryEngine.createTimestampedArtifact(
                                                 id = "art-stix-$i-${System.nanoTime()}",
                                                 platform = plat,
                                                 timestampIso = ts,
@@ -1015,7 +1037,7 @@ class MultiAiAndDataPortabilityService {
                             detectedFormat = "GENERIC_JSON_OBJECT"
                             val text = obj.optString("text", obj.optString("content", obj.optString("body", trimmed.take(360))))
                             newArtifacts.add(
-                                ForensicMathEngine.createTimestampedArtifact(
+                                StylometryEngine.createTimestampedArtifact(
                                     id = "art-json-single-${System.nanoTime()}",
                                     platform = obj.optString("platform", "JSON_IMPORT"),
                                     timestampIso = obj.optString("timestamp", currentIsoUtc()),
@@ -1045,7 +1067,7 @@ class MultiAiAndDataPortabilityService {
                             val plat = item.optString("platform", "JSON_ARRAY").uppercase(Locale.US)
                             if (text.isNotBlank()) {
                                 newArtifacts.add(
-                                    ForensicMathEngine.createTimestampedArtifact(
+                                    StylometryEngine.createTimestampedArtifact(
                                         id = "art-arr-$i-${System.nanoTime()}",
                                         platform = plat,
                                         timestampIso = ts,
@@ -1071,7 +1093,7 @@ class MultiAiAndDataPortabilityService {
                         val text = match.groupValues[3].trim()
                         if (text.isNotBlank()) {
                             newArtifacts.add(
-                                ForensicMathEngine.createTimestampedArtifact(
+                                StylometryEngine.createTimestampedArtifact(
                                     id = "art-xml-$idx-${System.nanoTime()}",
                                     platform = plat,
                                     timestampIso = ts,
@@ -1089,7 +1111,11 @@ class MultiAiAndDataPortabilityService {
                     val lines = trimmed.lines().map { it.trim() }.filter { it.isNotBlank() }
                     val startIdx = if (lines.first().lowercase(Locale.US).contains("verbatim_text") ||
                         lines.first().lowercase(Locale.US).contains("timestamp")
-                    ) 1 else 0
+                    ) {
+                        1
+                    } else {
+                        0
+                    }
 
                     for (i in startIdx until lines.size) {
                         val cols = parseCsvLine(lines[i])
@@ -1100,7 +1126,7 @@ class MultiAiAndDataPortabilityService {
                             val text = cols[7].trim()
                             if (text.isNotBlank()) {
                                 newArtifacts.add(
-                                    ForensicMathEngine.createTimestampedArtifact(
+                                    StylometryEngine.createTimestampedArtifact(
                                         id = "art-csv-$i-${System.nanoTime()}",
                                         platform = plat,
                                         timestampIso = ts,
@@ -1116,7 +1142,7 @@ class MultiAiAndDataPortabilityService {
                             val text = cols.subList(2, cols.size).joinToString(", ").trim()
                             if (text.isNotBlank()) {
                                 newArtifacts.add(
-                                    ForensicMathEngine.createTimestampedArtifact(
+                                    StylometryEngine.createTimestampedArtifact(
                                         id = "art-csv3-$i-${System.nanoTime()}",
                                         platform = plat.uppercase(Locale.US),
                                         timestampIso = ts,
@@ -1142,7 +1168,7 @@ class MultiAiAndDataPortabilityService {
                 .take(15)
             paragraphs.forEachIndexed { idx, para ->
                 newArtifacts.add(
-                    ForensicMathEngine.createTimestampedArtifact(
+                    StylometryEngine.createTimestampedArtifact(
                         id = "art-raw-$idx-${System.nanoTime()}",
                         platform = "IMPORTED_TRANSCRIPT",
                         timestampIso = currentIsoUtc(),
@@ -1162,10 +1188,7 @@ class MultiAiAndDataPortabilityService {
         )
     }
 
-    private fun recomputeProfileWithNewArtifacts(
-        activeSubject: SubjectProfile,
-        newArtifacts: List<ScrapedArtifactItem>
-    ): SubjectProfile {
+    private fun recomputeProfileWithNewArtifacts(activeSubject: SubjectProfile, newArtifacts: List<ScrapedArtifactItem>): SubjectProfile {
         if (newArtifacts.isEmpty()) return activeSubject
         val mergedArtifacts = (newArtifacts + activeSubject.scrapedArtifacts)
             .distinctBy { "${it.platform}:${it.verbatimText.take(80)}" }
@@ -1175,23 +1198,23 @@ class MultiAiAndDataPortabilityService {
         val combinedCorpus = mergedArtifacts.joinToString(" ") { it.verbatimText }
         val hours = mergedArtifacts.map { it.utcHour }
 
-        val eval = ForensicMathEngine.evaluateCorpus(
+        val eval = StylometryEngine.evaluateCorpus(
             rawText = combinedCorpus,
             repoCount = activeSubject.githubRepos.size,
             hfCount = activeSubject.huggingFaceAssets.size,
             followerCount = 400
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(
+        val chrono = ChronoGeoEngine.evaluateChronoAndGeo(
             utcHours = hours,
             declaredLocation = activeSubject.loc.substringBefore("(").trim()
         )
-        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
+        val lingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
             handle = activeSubject.handle,
             eval = eval,
             chrono = chrono,
             artifactsCount = mergedArtifacts.size
         )
-        val insights = ForensicMathEngine.synthesizeActionableInsights(
+        val insights = PlaybookEngine.synthesizeActionableInsights(
             handle = activeSubject.handle,
             eval = eval,
             chrono = chrono,
@@ -1200,7 +1223,9 @@ class MultiAiAndDataPortabilityService {
             healedPatchId = activeSubject.healedPatchId,
             lingProfile = lingProfile
         )
-        val newHash = ForensicMathEngine.sha256("${activeSubject.handle}:${mergedArtifacts.size}:${eval.burrowsDelta}:${System.currentTimeMillis()}")
+        val newHash = ForensicCommon.sha256(
+            "${activeSubject.handle}:${mergedArtifacts.size}:${eval.burrowsDelta}:${System.currentTimeMillis()}"
+        )
 
         return activeSubject.copy(
             burrowsDelta = eval.burrowsDelta,
@@ -1212,7 +1237,9 @@ class MultiAiAndDataPortabilityService {
             zScores = eval.zScores30,
             hourlyBins = chrono.hourlyBins,
             troughWindowLabel = chrono.windowLabel,
-            backStageQuote = "[${newArtifacts.first().platform} @ ${newArtifacts.first().timestampIso}]: \"${newArtifacts.first().verbatimText.take(150)}\"",
+            backStageQuote = "[${newArtifacts.first().platform} @ ${newArtifacts.first().timestampIso}]: \"${newArtifacts.first().verbatimText.take(
+                150
+            )}\"",
             scrapedArtifacts = mergedArtifacts,
             linguisticProfile = lingProfile,
             actionableInsights = insights,
@@ -1237,10 +1264,12 @@ class MultiAiAndDataPortabilityService {
                         inQuotes = !inQuotes
                     }
                 }
+
                 ch == ',' && !inQuotes -> {
                     result.add(current.toString())
                     current.clear()
                 }
+
                 else -> current.append(ch)
             }
             i++

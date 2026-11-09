@@ -40,7 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.ForensicMathEngine
+import com.example.engine.MindMapEngine
 import com.example.model.*
 import com.example.ui.theme.*
 import java.util.Locale
@@ -75,7 +75,7 @@ fun InteractiveMindMapSurface(
         if (fromRoom.isNotEmpty()) {
             fromRoom.sortedWith(compareBy<MindMapHierarchyEntity> { it.hierarchyDepth }.thenBy { it.hierarchyId })
         } else {
-            ForensicMathEngine.buildMindMapHierarchyEntities(activeSubject, allSubjects, triplets)
+            MindMapEngine.buildMindMapHierarchyEntities(activeSubject, allSubjects, triplets)
         }
     }
 
@@ -366,7 +366,9 @@ fun InteractiveMindMapSurface(
                             val hit = latestProjected.minByOrNull {
                                 hypot(it.screenX - tapOffset.x, it.screenY - tapOffset.y)
                             }
-                            if (hit != null && hypot(hit.screenX - tapOffset.x, hit.screenY - tapOffset.y) <= max(40f, hit.radiusPx + 20f)) {
+                            if (hit != null &&
+                                hypot(hit.screenX - tapOffset.x, hit.screenY - tapOffset.y) <= max(40f, hit.radiusPx + 20f)
+                            ) {
                                 selectedEntity = hit.entity
                             }
                         }
@@ -501,7 +503,13 @@ fun InteractiveMindMapSurface(
                     // Render Gaussian Nebula Background Particles
                     nebulaParticles.forEachIndexed { idx, (nx, ny, nz) ->
                         val proj = project3D(nx, ny, nz) ?: return@forEachIndexed
-                        val pColor = if (idx % 3 == 0) CyanTelemetry else if (idx % 2 == 0) PhosphorGreen else AmberSignal
+                        val pColor = if (idx % 3 == 0) {
+                            CyanTelemetry
+                        } else if (idx % 2 == 0) {
+                            PhosphorGreen
+                        } else {
+                            AmberSignal
+                        }
                         drawCircle(
                             color = pColor.copy(alpha = 0.16f),
                             radius = (1.5f * proj.third).coerceIn(1f, 3.8f),
@@ -516,14 +524,17 @@ fun InteractiveMindMapSurface(
                         val cat = parseNodeCategory(ent.nodeCategory)
                         val (bx, by, bz) = when (graphMode) {
                             "UMAP" -> Triple(ent.umapX, ent.umapY, ent.umapZ)
+
                             "RADIAL" -> {
                                 when (ent.hierarchyDepth) {
                                     0 -> Triple(0f, 0f, 0f)
+
                                     1 -> {
                                         val idx1 = depth1List.indexOf(ent).coerceAtLeast(0)
                                         val ang = (idx1 * 2 * Math.PI / max(1, depth1List.size)).toFloat()
                                         Triple(cos(ang) * 74f, sin(ang) * 74f, 0f)
                                     }
+
                                     else -> {
                                         val idx2 = depth2List.indexOf(ent).coerceAtLeast(0)
                                         val ang = (idx2 * 2 * Math.PI / max(1, depth2List.size)).toFloat()
@@ -531,6 +542,7 @@ fun InteractiveMindMapSurface(
                                     }
                                 }
                             }
+
                             else -> Triple(ent.x3d, ent.y3d, ent.z3d)
                         }
                         val proj = project3D(bx, by, bz) ?: return@forEach
@@ -571,9 +583,12 @@ fun InteractiveMindMapSurface(
                         val bezierPath = Path().apply {
                             moveTo(src.screenX, src.screenY)
                             cubicTo(
-                                src.screenX, midY,
-                                dst.screenX, midY,
-                                dst.screenX, dst.screenY
+                                src.screenX,
+                                midY,
+                                dst.screenX,
+                                midY,
+                                dst.screenX,
+                                dst.screenY
                             )
                         }
                         drawPath(
@@ -657,7 +672,15 @@ fun InteractiveMindMapSurface(
                         color = if (isSel) AmberSignal else pn.color,
                         radius = pn.radiusPx,
                         center = Offset(pn.screenX, pn.screenY),
-                        style = Stroke(width = if (isSel) 3.2f else if (isRoot || isHub) 2.2f else 1.6f)
+                        style = Stroke(
+                            width = if (isSel) {
+                                3.2f
+                            } else if (isRoot || isHub) {
+                                2.2f
+                            } else {
+                                1.6f
+                            }
+                        )
                     )
                     drawCircle(
                         color = pn.color,
@@ -669,7 +692,13 @@ fun InteractiveMindMapSurface(
                         text = pn.entity.childLabel.take(18),
                         style = TextStyle(
                             color = if (isSel) AmberSignal else TextPrimary,
-                            fontSize = if (isRoot) 11.sp else if (isHub) 9.5.sp else 8.5.sp,
+                            fontSize = if (isRoot) {
+                                11.sp
+                            } else if (isHub) {
+                                9.5.sp
+                            } else {
+                                8.5.sp
+                            },
                             fontWeight = if (isSel || isRoot || isHub) FontWeight.Bold else FontWeight.Normal,
                             fontFamily = ShareTechMonoFamily
                         )
@@ -1007,12 +1036,7 @@ fun InteractiveMindMapSurface(
 }
 
 @Composable
-private fun MiniPsychBadge(
-    trait: String,
-    score: Int,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
+private fun MiniPsychBadge(trait: String, score: Int, color: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .background(ObsidianBg, RoundedCornerShape(3.dp))
@@ -1030,12 +1054,7 @@ private fun MiniPsychBadge(
 }
 
 @Composable
-private fun FilterPill(
-    label: String,
-    color: Color,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
+private fun FilterPill(label: String, color: Color, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .background(
