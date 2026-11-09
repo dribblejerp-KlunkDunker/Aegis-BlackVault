@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,6 +65,8 @@ fun InsightsAndExportScreen(
     onSelectAiProvider: (AiProviderEngine) -> Unit = {},
     onSelectAiModel: (String) -> Unit = {},
     onUpdateInAppApiKey: (String) -> Unit = {},
+    githubTokenConfigured: Boolean = false,
+    onUpdateGithubToken: (String) -> Unit = {},
     onUpdateAiDirective: (String) -> Unit = {},
     onExecuteAiSynthesis: () -> Unit = {},
     onIngestAiResponse: () -> Unit = {},
@@ -82,6 +85,7 @@ fun InsightsAndExportScreen(
     var importPasteBuffer by remember { mutableStateOf("") }
     var useGeminiForFileImport by remember { mutableStateOf(false) }
     var showApiKeyVault by remember { mutableStateOf(false) }
+    var githubTokenDraft by remember { mutableStateOf("") }
 
     val activeModelId = selectedModelByProvider[selectedAiProvider]?.takeIf { it.isNotBlank() }
         ?: selectedAiProvider.defaultModelId
@@ -478,6 +482,8 @@ fun InsightsAndExportScreen(
                                         value = activeInAppKey,
                                         onValueChange = onUpdateInAppApiKey,
                                         singleLine = true,
+                                        // Keys are masked on screen (they are stored encrypted with Android Keystore).
+                                        visualTransformation = PasswordVisualTransformation(),
                                         label = {
                                             Text(
                                                 "Optional In-App ${selectedAiProvider.secretKeyName} Override (leave blank to use AI Studio Secrets)",
@@ -494,6 +500,51 @@ fun InsightsAndExportScreen(
                                             .fillMaxWidth()
                                             .testTag("ai_in_app_key_input")
                                     )
+
+                                    // Optional GitHub token: raises the GitHub API limit from 60 to 5,000 requests/hour.
+                                    OutlinedTextField(
+                                        value = githubTokenDraft,
+                                        onValueChange = { githubTokenDraft = it },
+                                        singleLine = true,
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        label = {
+                                            Text(
+                                                if (githubTokenConfigured) {
+                                                    "GitHub token: stored (encrypted). Enter a new one to replace it, or save blank to clear"
+                                                } else {
+                                                    "Optional GitHub token (read-only, public access): 60 -> 5,000 requests/hr"
+                                                },
+                                                fontSize = 8.5.sp
+                                            )
+                                        },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = providerColor,
+                                            unfocusedBorderColor = PhosphorGreenDim,
+                                            focusedTextColor = TextPrimary,
+                                            unfocusedTextColor = TextPrimary
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("github_token_input")
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .testTag("save_github_token_btn")
+                                            .background(ObsidianBg, RoundedCornerShape(4.dp))
+                                            .border(1.dp, providerColor, RoundedCornerShape(4.dp))
+                                            .clickable {
+                                                onUpdateGithubToken(githubTokenDraft)
+                                                githubTokenDraft = ""
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (githubTokenDraft.isBlank() && githubTokenConfigured) "CLEAR GITHUB TOKEN" else "SAVE GITHUB TOKEN",
+                                            color = providerColor,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
 

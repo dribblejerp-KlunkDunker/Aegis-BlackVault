@@ -233,7 +233,7 @@ fun CommandDeckScreen(
                     )
                 }
 
-                ThreatMetricBar("Pathway to Escalation / Hostility", activeSubject.threatMetrics.pathwayToViolence, AlarmRed)
+                ThreatMetricBar(if (activeSubject.restrictedOutputsUnlocked) "Pathway to Escalation / Hostility" else "Pathway to Escalation (WITHHELD: consent required)", activeSubject.threatMetrics.pathwayToViolence, AlarmRed)
                 ThreatMetricBar("Memetic Virality & Reach", activeSubject.threatMetrics.memeticVirality, AmberSignal)
                 ThreatMetricBar("Front/Back-Stage Context Collapse", activeSubject.threatMetrics.contextCollapse, PhosphorGreen)
                 ThreatMetricBar("GraphRAG Network Centrality", activeSubject.threatMetrics.networkCentrality, CyanTelemetry)

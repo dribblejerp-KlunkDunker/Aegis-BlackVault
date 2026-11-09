@@ -6,6 +6,7 @@ plugins {
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -16,8 +17,8 @@ android {
     applicationId = "com.aistudio.aegisblackvault.kxmpzq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "3.5"
+    versionCode = 2
+    versionName = "3.6"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -43,7 +44,9 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8 shrinking/obfuscation on for release. Room, Firebase and Compose ship their own consumer rules;
+      // see proguard-rules.pro for project rules. Verify a release build before publishing (roadmap Phase 6).
+      isMinifyEnabled = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -79,6 +82,9 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+// Export Room schema JSON so migrations can be reviewed and tested (AegisDatabase exportSchema = true).
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
@@ -132,6 +138,10 @@ dependencies {
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
+  // Screenshot and GIF capture of real screens on the JVM (roadmap Phase 1).
+  testImplementation(libs.roborazzi)
+  testImplementation(libs.roborazzi.compose)
+  testImplementation(libs.roborazzi.junit.rule)
   androidTestImplementation(platform(libs.androidx.compose.bom))
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)

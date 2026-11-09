@@ -135,7 +135,9 @@ class ExampleRobolectricTest {
 
     @Test
     fun `okhttp scraper service parses html hydration and persists scraped dossier into room`() = runTest {
-        val scraperService = OsintScraperService()
+        // Hermetic: canned GitHub responses instead of the live network (the old version only passed
+        // offline because the scraper fabricated data when requests failed).
+        val scraperService = OsintScraperService(customClient = FakeGithubApi.client())
         val sampleHtml = """
             <html>
               <head>
@@ -166,16 +168,17 @@ class ExampleRobolectricTest {
 
         // Verify full scrapeAndBuildProfile + Room persistence pipeline
         val result = scraperService.scrapeAndBuildProfile(
-            rawTargetInput = "torvalds",
+            rawTargetInput = FakeGithubApi.LOGIN,
             platformMode = ScraperPlatformMode.GITHUB
         )
         assertTrue(result.httpProbes.isNotEmpty())
+        assertTrue(result.profile.dataProvenance.startsWith("LIVE"))
         repository.saveProfile(result.profile, listOf(result.profile), result.triplets)
 
         val dao = db.aegisDao()
         val persistedDossier = dao.observeFullDossierById(result.profile.id).first()
         assertNotNull(persistedDossier)
-        assertEquals("TORVALDS", persistedDossier!!.subject.handle)
+        assertEquals(FakeGithubApi.LOGIN.uppercase().replace("-", "_"), persistedDossier!!.subject.handle)
         assertTrue(persistedDossier.rawSocialEntities.isNotEmpty())
         assertNotNull(persistedDossier.linguisticProfile)
         assertTrue(persistedDossier.mindMapHierarchy.isNotEmpty())
@@ -250,9 +253,13 @@ class ExampleRobolectricTest {
 
         // 3. Verify Provider Model Catalogs (Gemini, Claude, Perplexity) & Key Resolution
         assertTrue(com.example.model.AiProviderEngine.GEMINI.presetModels.any { it.modelId == "gemini-3.8-flash" })
-        assertTrue(com.example.model.AiProviderEngine.GEMINI.presetModels.any { it.modelId == "gemini-2.5-pro" })
-        assertTrue(com.example.model.AiProviderEngine.CLAUDE.presetModels.any { it.modelId == "claude-3-7-sonnet-20250219" })
-        assertTrue(com.example.model.AiProviderEngine.CLAUDE.presetModels.any { it.modelId == "claude-sonnet-4-20250514" })
+        assertTrue(com.example.model.AiProviderEngine.CLAUDE.presetModels.any { it.modelId == "claude-sonnet-5-5" })
+        // No retired model IDs may be offered as presets.
+        com.example.model.AiProviderEngine.entries.forEach { provider ->
+            provider.presetModels.forEach { option ->
+                assertFalse(option.modelId in com.example.model.AiProviderEngine.RETIRED_MODEL_IDS)
+            }
+        }
         assertTrue(com.example.model.AiProviderEngine.PERPLEXITY.presetModels.any { it.modelId == "sonar-pro" })
 
         val (customClaudeKey, claudeSource) = portabilityService.resolveApiKeyAndSource(
@@ -293,6 +300,8 @@ class ExampleRobolectricTest {
         assertTrue(corpusAssessment.situationalWatchpoints.isNotEmpty())
         assertTrue(corpusAssessment.reemaKeyBindingJson.contains("\"type\": \"KeyBinding\""))
         assertTrue(corpusAssessment.reemaKeyBindingJson.contains("ML-DSA-65"))
+        // The KeyBinding is a placeholder and must say so.
+        assertTrue(corpusAssessment.reemaKeyBindingJson.contains("\"simulated\": true"))
 
         // 2. High-bait draft sandbox evaluation (verdad-service.shouldShare)
         val highBaitDraft = "BREAKING: Share before deleted!! Wake up sheep, they don't want you to know the secret agenda coverup! Everyone knows either we act now or we will be destroyed!"

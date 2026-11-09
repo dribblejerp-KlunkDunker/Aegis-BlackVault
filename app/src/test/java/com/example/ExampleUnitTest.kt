@@ -13,9 +13,13 @@ class ExampleUnitTest {
         """.trimIndent()
 
         val eval = ForensicMathEngine.evaluateCorpus(sampleText, repoCount = 6, hfCount = 3, followerCount = 400)
-        assertTrue(eval.burrowsDelta > 0.0)
+        // A ~30-word sample is far below the stylometry minimum, so Burrows' Delta is withheld (0.0)
+        // rather than reported as a finding.
+        assertTrue(eval.tokenCount < com.example.model.DataSufficiency.MIN_WORDS_FOR_STYLOMETRY)
+        assertEquals(0.0, eval.burrowsDelta, 0.0)
         assertEquals(30, eval.zScores30.size)
-        assertTrue(eval.ocean.C in 20..99)
+        // Scores are clamped to their real 0..100 range now (the old artificial 24..97 band was removed).
+        assertTrue(eval.ocean.C in 0..100)
 
         val chrono = ForensicMathEngine.evaluateChronoAndGeo(listOf(8, 9, 10, 11, 12, 13, 14, 15, 16), "Zürich, CH")
         assertEquals(47.3769, chrono.lat, 0.01)

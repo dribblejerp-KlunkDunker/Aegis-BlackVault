@@ -81,6 +81,18 @@ class MultiAiAndDataPortabilityService {
         val summaryMessage: String
     )
 
+    /**
+     * Policy line placed at the top of every prompt bundle sent to an AI provider or copied for pasting.
+     * For subjects without recorded consent it tells the model not to regenerate the restricted outputs
+     * that the app itself withholds.
+     */
+    fun consentPreamble(subject: SubjectProfile): String =
+        if (subject.restrictedOutputsUnlocked) {
+            "AEGIS POLICY: consent=${subject.consentStatus.name}; data quality: ${subject.dataQualityLabel}. Scores are heuristic estimates, not validated psychometric instruments; say so where relevant."
+        } else {
+            "AEGIS POLICY: consent=UNVERIFIED; data quality: ${subject.dataQualityLabel}. The person described has not consented to profiling. Do NOT produce persuasion or leverage tactics, exploitable biases, rapport or manipulation scripts, personality-disorder or Dark Triad judgments, violence-risk estimates, or inferences about their location, schedule or sleep. Limit the answer to a factual, sourced summary of the collected public material and its reliability."
+        }
+
     private fun isConfiguredSecretKey(candidate: String): Boolean {
         val trimmed = candidate.trim()
         return trimmed.isNotEmpty() &&
@@ -135,7 +147,11 @@ class MultiAiAndDataPortabilityService {
     ): Flow<AiSynthesisState> = flow {
         val effectiveModel = selectedModelId.trim().ifBlank { provider.defaultModelId }
         val directive = customDirective.trim().ifBlank {
-            "Synthesize an executive behavioral briefing covering: (1) What makes ${subject.handle} tick, (2) Exact rapport & communication openers, (3) Cognitive biases & negotiation leverage vectors, and (4) OPSEC / stylometric verification."
+            if (subject.restrictedOutputsUnlocked) {
+                "Synthesize an executive behavioral briefing covering: (1) What makes ${subject.handle} tick, (2) Exact rapport & communication openers, (3) Cognitive biases & negotiation leverage vectors, and (4) OPSEC / stylometric verification."
+            } else {
+                "Summarize, factually and with sources, the public material collected for ${subject.handle}: what was collected, from where, when, and how reliable the scores are given the data-quality label."
+            }
         }
         val (apiKey, keySourceLabel) = resolveApiKeyAndSource(provider, inAppKeyOverride)
 
@@ -348,7 +364,8 @@ class MultiAiAndDataPortabilityService {
         authSourceLabel: String
     ): AiSynthesisState {
         val cleanModel = modelId.removePrefix("models/").trim()
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$apiKey"
+        // Key goes in the x-goog-api-key header, never the URL (URLs end up in proxy and server logs).
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
         val payload = JSONObject().apply {
             put(
                 "contents",
@@ -377,6 +394,7 @@ class MultiAiAndDataPortabilityService {
 
         val req = Request.Builder()
             .url(url)
+            .header("x-goog-api-key", apiKey)
             .header("Content-Type", "application/json")
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
@@ -430,7 +448,7 @@ class MultiAiAndDataPortabilityService {
             put("max_tokens", 1400)
             put(
                 "system",
-                "You are an expert psycholinguistic profiler and OSINT intelligence analyst operating inside Aegis Blackvault. Analyze the provided XML dossier using Pennebaker LIWC, Big Five OCEAN, Dark Triad, and Burrows' Delta stylometry."
+                "You are a careful psycholinguistic and open-source research analyst inside Aegis Blackvault. Analyze the provided XML dossier and be explicit about data quality and uncertainty. " + consentPreamble(subject)
             )
             put(
                 "messages",
@@ -505,7 +523,7 @@ class MultiAiAndDataPortabilityService {
                             put("role", "system")
                             put(
                                 "content",
-                                "You are an OSINT web-grounding and psycholinguistic verification engine. Corroborate public technical footprints, repositories, publications, and behavioral patterns with citations."
+                                "You verify public technical footprints (repositories, publications, models) with citations. " + consentPreamble(subject)
                             )
                         }
                     )
@@ -813,10 +831,15 @@ class MultiAiAndDataPortabilityService {
     fun buildClaudeXmlBundle(subject: SubjectProfile, customDirective: String = ""): String {
         val lp = subject.linguisticProfile
         val directive = customDirective.trim().ifBlank {
-            "Analyze this subject's psycholinguistic profile, identify hidden motivational vulnerabilities, and write 3 high-converting rapport & negotiation scripts."
+            if (subject.restrictedOutputsUnlocked) {
+                "Analyze this subject's psycholinguistic profile, identify motivational drivers, and suggest 3 rapport and negotiation approaches."
+            } else {
+                "Summarize, factually and with sources, the public material collected for ${subject.handle}: what was collected, from where, when, and how reliable the scores are given the data-quality label."
+            }
         }
         return buildString {
-            appendLine("<aegis_osint_dossier schema=\"3.5\" target=\"${subject.handle}\">")
+            appendLine("<!-- ${consentPreamble(subject)} -->")
+            appendLine("<aegis_osint_dossier schema=\"3.6\" target=\"${subject.handle}\" consent=\"${subject.consentStatus.name}\" data_quality=\"${subject.dataQualityLabel}\">")
             appendLine("  <identity>")
             appendLine("    <handle>${subject.handle}</handle>")
             appendLine("    <alias>${subject.alias}</alias>")
@@ -854,9 +877,15 @@ class MultiAiAndDataPortabilityService {
     fun buildGeminiMarkdownContext(subject: SubjectProfile, customDirective: String = ""): String {
         val lp = subject.linguisticProfile
         val directive = customDirective.trim().ifBlank {
-            "Provide an actionable psycholinguistic briefing for ${subject.handle}: (1) Psychological Core & Ego Drivers, (2) High-LSM Communication Scripts, (3) Persuasion & Negotiation Leverage, and (4) Cross-Platform Stylometric Verification."
+            if (subject.restrictedOutputsUnlocked) {
+                "Provide an actionable psycholinguistic briefing for ${subject.handle}: (1) Psychological Core & Ego Drivers, (2) High-LSM Communication Scripts, (3) Persuasion & Negotiation Leverage, and (4) Cross-Platform Stylometric Verification."
+            } else {
+                "Summarize, factually and with sources, the public material collected for ${subject.handle}: what was collected, from where, when, and how reliable the scores are given the data-quality label."
+            }
         }
         return buildString {
+            appendLine("> ${consentPreamble(subject)}")
+            appendLine()
             appendLine("# AEGIS BLACKVAULT // GEMINI AI DOSSIER CONTEXT")
             appendLine("- **Subject**: `${subject.handle}` (${subject.alias})")
             appendLine("- **Archetype**: ${lp.archetypeTitle} — ${lp.archetypeSummary}")
@@ -883,9 +912,11 @@ class MultiAiAndDataPortabilityService {
         val repoNames = subject.githubRepos.take(4).joinToString(", ") { it.fullName }
         val hfNames = subject.huggingFaceAssets.take(4).joinToString(", ") { it.id }
         val directive = customDirective.trim().ifBlank {
-            "Perform a web-grounded OSINT verification and behavioral cross-check on this target's public technical footprint, commits, publications, and aliases."
+            "Verify, with citations, the public technical footprint listed below (repositories, models, publications). Do not search for personal information beyond it."
         }
         return buildString {
+            appendLine(consentPreamble(subject))
+            appendLine()
             appendLine("OSINT TARGET CORROBORATION & WEB GROUNDING QUERY:")
             appendLine("Target Handle / Alias: ${subject.handle} (${subject.alias})")
             appendLine("Known GitHub Repositories: $repoNames")

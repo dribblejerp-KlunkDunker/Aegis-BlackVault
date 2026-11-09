@@ -317,7 +317,8 @@ fun AegisBlackvaultApp(
                                 allSubjects = uiState.profiles,
                                 selectedSpectrumToken = uiState.selectedSpectrumToken,
                                 onSelectSpectrumToken = viewModel::selectSpectrumToken,
-                                onSelectComparisonSubject = viewModel::selectComparisonSubject
+                                onSelectComparisonSubject = viewModel::selectComparisonSubject,
+                                onSetConsent = viewModel::setSubjectConsent
                             )
 
                             3 -> ScraperBridgeScreen(
@@ -383,6 +384,8 @@ fun AegisBlackvaultApp(
                                     onUpdateInAppApiKey = { keyText ->
                                         viewModel.updateInAppApiKey(keyText, uiState.selectedAiProvider)
                                     },
+                                    githubTokenConfigured = uiState.githubTokenConfigured,
+                                    onUpdateGithubToken = viewModel::updateGithubToken,
                                     onUpdateAiDirective = viewModel::updateAiDirectivePrompt,
                                     onExecuteAiSynthesis = viewModel::executeMultiAiAnalysis,
                                     onIngestAiResponse = viewModel::ingestAiResponseIntoDossier,
