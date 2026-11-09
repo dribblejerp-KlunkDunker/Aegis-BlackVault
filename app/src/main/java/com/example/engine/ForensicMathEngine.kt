@@ -278,7 +278,9 @@ object ForensicMathEngine {
         val hostileRatePct: Float,
         val prosocialRatePct: Float,
         val anxiousRatePct: Float,
-        val articlePrepositionPct: Float
+        val articlePrepositionPct: Float,
+        /** Real number of word tokens analyzed (0 when nothing was collected). */
+        val tokenCount: Int = 0
     )
 
     /**
@@ -307,9 +309,21 @@ object ForensicMathEngine {
             deltaAccum += abs(zAuthor - refZ)
         }
 
-        val burrowsDelta = round((deltaAccum / CALIBRATED_CORPUS_50.size) * 1000.0) / 1000.0
-        val logisticMatch = (1.0 / (1.0 + exp(3.8 * (burrowsDelta - 0.72)))) * 100.0
-        val styloMatchPct = round(logisticMatch.coerceIn(8.4, 99.4) * 10.0) / 10.0
+        // Burrows' Delta is only meaningful on long samples; below the threshold it is withheld (0.0)
+        // instead of reported. NOTE: the reference vector (NULL_ROUTER_REF_Z) is a built-in demo persona,
+        // so styloMatchPct measures similarity to that persona only, not identity of any real author.
+        val stylometryReliable = tokens.size >= DataSufficiency.MIN_WORDS_FOR_STYLOMETRY
+        val burrowsDelta = if (stylometryReliable) {
+            round((deltaAccum / CALIBRATED_CORPUS_50.size) * 1000.0) / 1000.0
+        } else {
+            0.0
+        }
+        val styloMatchPct = if (stylometryReliable) {
+            val logisticMatch = (1.0 / (1.0 + exp(3.8 * (burrowsDelta - 0.72)))) * 100.0
+            round(logisticMatch.coerceIn(0.0, 100.0) * 10.0) / 10.0
+        } else {
+            0.0
+        }
 
         val windowSize = min(50, total)
         val mattr = if (total <= 50) {
@@ -346,20 +360,20 @@ object ForensicMathEngine {
         val sentences = rawText.split(Regex("[.!?]+")).map { it.trim() }.filter { it.isNotEmpty() }
         val meanSentenceLen = total.toDouble() / max(sentences.size, 1)
 
-        val openness = (38.0 + mattr * 46.0 + analyticRate * 4.2 + min(12.0, (repoCount + hfCount) * 0.8)).roundToInt().coerceIn(22, 97)
-        val conscientiousness = (46.0 + min(22.0, meanSentenceLen * 0.95) + analyticRate * 4.8 + directiveRate * 3.1).roundToInt().coerceIn(24, 97)
-        val extraversion = (40.0 + (weRate + youRate) * 6.5 - iRate * 1.6 + min(18.0, ln(max(1.0, followerCount.toDouble())) * 2.5)).roundToInt().coerceIn(20, 95)
-        val agreeableness = (64.0 + prosocialRate * 9.5 - hostileRate * 14.5 - directiveRate * 1.8).roundToInt().coerceIn(14, 95)
-        val neuroticism = (34.0 + anxiousRate * 11.0 + hostileRate * 8.5 + iRate * 2.2).roundToInt().coerceIn(16, 96)
+        val openness = (38.0 + mattr * 46.0 + analyticRate * 4.2 + min(12.0, (repoCount + hfCount) * 0.8)).roundToInt().coerceIn(0, 100)
+        val conscientiousness = (46.0 + min(22.0, meanSentenceLen * 0.95) + analyticRate * 4.8 + directiveRate * 3.1).roundToInt().coerceIn(0, 100)
+        val extraversion = (40.0 + (weRate + youRate) * 6.5 - iRate * 1.6 + min(18.0, ln(max(1.0, followerCount.toDouble())) * 2.5)).roundToInt().coerceIn(0, 100)
+        val agreeableness = (64.0 + prosocialRate * 9.5 - hostileRate * 14.5 - directiveRate * 1.8).roundToInt().coerceIn(0, 100)
+        val neuroticism = (34.0 + anxiousRate * 11.0 + hostileRate * 8.5 + iRate * 2.2).roundToInt().coerceIn(0, 100)
 
-        val machiavellianism = (36.0 + directiveRate * 9.2 + (100 - agreeableness) * 0.38 + analyticRate * 2.1).roundToInt().coerceIn(18, 96)
-        val narcissism = (32.0 + iRate * 8.5 + directiveRate * 5.2 + min(16.0, ln(max(1.0, followerCount.toDouble())) * 2.2)).roundToInt().coerceIn(16, 95)
-        val psychopathy = (22.0 + hostileRate * 13.5 + (100 - agreeableness) * 0.34 - anxiousRate * 1.5).roundToInt().coerceIn(12, 94)
+        val machiavellianism = (36.0 + directiveRate * 9.2 + (100 - agreeableness) * 0.38 + analyticRate * 2.1).roundToInt().coerceIn(0, 100)
+        val narcissism = (32.0 + iRate * 8.5 + directiveRate * 5.2 + min(16.0, ln(max(1.0, followerCount.toDouble())) * 2.2)).roundToInt().coerceIn(0, 100)
+        val psychopathy = (22.0 + hostileRate * 13.5 + (100 - agreeableness) * 0.34 - anxiousRate * 1.5).roundToInt().coerceIn(0, 100)
 
-        val pathwayToViolence = (28.0 + hostileRate * 15.0 + directiveRate * 6.5 + (100 - agreeableness) * 0.32).roundToInt().coerceIn(15, 96)
-        val memeticVirality = (48.0 + extraversion * 0.35 + min(28.0, (repoCount * 2.5 + hfCount * 4.0))).roundToInt().coerceIn(28, 98)
-        val contextCollapse = (42.0 + abs(openness - agreeableness) * 0.65 + anxiousRate * 5.5).roundToInt().coerceIn(25, 95)
-        val networkCentrality = (52.0 + min(42.0, ln(max(2.0, (followerCount + repoCount * 15).toDouble())) * 6.2)).roundToInt().coerceIn(32, 99)
+        val pathwayToViolence = (28.0 + hostileRate * 15.0 + directiveRate * 6.5 + (100 - agreeableness) * 0.32).roundToInt().coerceIn(0, 100)
+        val memeticVirality = (48.0 + extraversion * 0.35 + min(28.0, (repoCount * 2.5 + hfCount * 4.0))).roundToInt().coerceIn(0, 100)
+        val contextCollapse = (42.0 + abs(openness - agreeableness) * 0.65 + anxiousRate * 5.5).roundToInt().coerceIn(0, 100)
+        val networkCentrality = (52.0 + min(42.0, ln(max(2.0, (followerCount + repoCount * 15).toDouble())) * 6.2)).roundToInt().coerceIn(0, 100)
 
         val top30 = linkedMapOf<String, Float>()
         zScoresFull.entries.take(30).forEach { top30[it.key] = it.value }
@@ -380,7 +394,8 @@ object ForensicMathEngine {
             hostileRatePct = (round(hostileRate * 100.0) / 100.0).toFloat(),
             prosocialRatePct = (round(prosocialRate * 100.0) / 100.0).toFloat(),
             anxiousRatePct = (round(anxiousRate * 100.0) / 100.0).toFloat(),
-            articlePrepositionPct = (round(articlePrepRate * 100.0) / 100.0).toFloat()
+            articlePrepositionPct = (round(articlePrepRate * 100.0) / 100.0).toFloat(),
+            tokenCount = tokens.size
         )
     }
 
@@ -395,11 +410,11 @@ object ForensicMathEngine {
         artifactsCount: Int
     ): LinguisticPersonalityProfile {
         // Pennebaker LIWC Composite Indices (0..100)
-        val ati = (42.0 + eval.articlePrepositionPct * 2.8 + eval.analyticRatePct * 6.5 - eval.iPronounPct * 2.5).roundToInt().coerceIn(25, 98)
-        val clout = (50.0 + (eval.wePronounPct + eval.youPronounPct) * 8.0 + eval.directiveRatePct * 6.0 - eval.iPronounPct * 4.5 - eval.anxiousRatePct * 5.0).roundToInt().coerceIn(22, 97)
-        val authenticity = (48.0 + eval.iPronounPct * 7.5 + eval.mattr * 25.0 - eval.directiveRatePct * 3.0).roundToInt().coerceIn(20, 95)
-        val tone = (52.0 + eval.prosocialRatePct * 12.0 - eval.hostileRatePct * 16.0 - eval.anxiousRatePct * 6.0).roundToInt().coerceIn(10, 96)
-        val complexity = (38.0 + eval.mattr * 52.0 + eval.analyticRatePct * 5.5).roundToInt().coerceIn(28, 98)
+        val ati = (42.0 + eval.articlePrepositionPct * 2.8 + eval.analyticRatePct * 6.5 - eval.iPronounPct * 2.5).roundToInt().coerceIn(0, 100)
+        val clout = (50.0 + (eval.wePronounPct + eval.youPronounPct) * 8.0 + eval.directiveRatePct * 6.0 - eval.iPronounPct * 4.5 - eval.anxiousRatePct * 5.0).roundToInt().coerceIn(0, 100)
+        val authenticity = (48.0 + eval.iPronounPct * 7.5 + eval.mattr * 25.0 - eval.directiveRatePct * 3.0).roundToInt().coerceIn(0, 100)
+        val tone = (52.0 + eval.prosocialRatePct * 12.0 - eval.hostileRatePct * 16.0 - eval.anxiousRatePct * 6.0).roundToInt().coerceIn(0, 100)
+        val complexity = (38.0 + eval.mattr * 52.0 + eval.analyticRatePct * 5.5).roundToInt().coerceIn(0, 100)
 
         val isHighAnalytic = ati >= 75
         val isLowAgreeable = eval.ocean.A <= 40
@@ -542,11 +557,21 @@ object ForensicMathEngine {
      */
     fun evaluateChronoAndGeo(utcHours: List<Int>, declaredLocation: String?): ChronoGeoEvaluation {
         val bins = IntArray(24)
-        if (utcHours.isEmpty()) {
-            val defaultHours = listOf(7, 8, 9, 9, 10, 11, 12, 13, 14, 14, 15, 16, 17, 18, 19, 20, 21)
-            defaultHours.forEach { bins[it % 24]++ }
-        } else {
-            utcHours.forEach { bins[(it % 24 + 24) % 24]++ }
+        utcHours.forEach { bins[(it % 24 + 24) % 24]++ }
+
+        // Too few real timestamps: report that honestly instead of inventing an activity pattern.
+        if (utcHours.size < MIN_TIMESTAMPS_FOR_CHRONO) {
+            return ChronoGeoEvaluation(
+                hourlyBins = bins.toList(),
+                troughStartUtc = 0,
+                troughEndUtc = 0,
+                inferredUtcOffset = 0,
+                windowLabel = "INSUFFICIENT TIMESTAMPS (${utcHours.size}/$MIN_TIMESTAMPS_FOR_CHRONO)",
+                lat = 0.0,
+                lon = 0.0,
+                locationLabel = declaredLocation?.takeIf { it.isNotBlank() }?.let { "DECLARED: ${it.uppercase(Locale.US)}" }
+                    ?: "UNKNOWN"
+            )
         }
 
         var minSum = Int.MAX_VALUE
@@ -587,25 +612,73 @@ object ForensicMathEngine {
             }
         }
 
+        // A UTC offset only constrains longitude; latitude is unknown, so no coordinates are invented.
         val meridianLon = (inferredOffset * 15.0).coerceIn(-180.0, 180.0)
-        val estimatedLat = when {
-            inferredOffset < -3 -> 38.5
-            inferredOffset in -3..3 -> 48.2
-            else -> 35.6
-        }
         return ChronoGeoEvaluation(
             hourlyBins = bins.toList(),
             troughStartUtc = troughStart,
             troughEndUtc = troughEnd,
             inferredUtcOffset = inferredOffset,
             windowLabel = windowLabel,
-            lat = estimatedLat,
-            lon = meridianLon,
+            lat = 0.0,
+            lon = 0.0,
             locationLabel = if (!declaredLocation.isNullOrBlank()) {
                 "${declaredLocation.uppercase(Locale.US)} // MERIDIAN UTC$offsetSign"
             } else {
                 "MERIDIAN PROJECTION UTC$offsetSign (${meridianLon}°E/W)"
             }
+        )
+    }
+
+    /** Minimum number of real, timestamped events before an activity-window estimate is attempted. */
+    const val MIN_TIMESTAMPS_FOR_CHRONO = 12
+
+    const val RESTRICTED_LABEL = "WITHHELD (CONSENT REQUIRED)"
+
+    /** Insight categories that are restricted inferences about a person. */
+    val RESTRICTED_INSIGHT_CATEGORIES = setOf(
+        "WHAT_MAKES_THEM_TICK",
+        "HOW_TO_TALK",
+        "INFLUENCE_LEVERAGE",
+        "OPSEC_CHRONO"
+    )
+
+    /**
+     * Consent gate. For subjects whose consent is not SELF / CONSENTED / DEMO, strips restricted
+     * inferences before the profile is stored, shown, exported or sent to an AI provider:
+     * persuasion/leverage playbooks, exploitable biases, Dark Triad, violence pathway,
+     * activity-window (sleep) and inferred location. Collected artifacts and non-restricted
+     * descriptive metrics are kept. Unlocking later recomputes from stored artifacts.
+     */
+    fun applyConsentGate(profile: SubjectProfile): SubjectProfile {
+        if (profile.restrictedOutputsUnlocked) return profile
+        val lp = profile.linguisticProfile
+        return profile.copy(
+            darkTriad = DarkTriadScores(machiavellianism = 0, narcissism = 0, psychopathy = 0),
+            threatMetrics = profile.threatMetrics.copy(pathwayToViolence = 0),
+            troughWindowLabel = RESTRICTED_LABEL,
+            hourlyBins = List(24) { 0 },
+            utcOffset = 0,
+            lat = 0.0,
+            lon = 0.0,
+            loc = RESTRICTED_LABEL,
+            backStageQuote = if (profile.backStageQuote.contains("trough", ignoreCase = true)) {
+                "[RESTRICTED]: activity-window inference withheld until consent is recorded."
+            } else {
+                profile.backStageQuote
+            },
+            linguisticProfile = lp.copy(
+                whatMakesThemTick = emptyList(),
+                egoCravingsAndRewards = emptyList(),
+                fearAndFrictionTriggers = emptyList(),
+                howToTalkToThem = emptyList(),
+                exactPhrasesToUse = emptyList(),
+                phrasesToAvoid = emptyList(),
+                persuasionAndLeverageHooks = emptyList(),
+                cognitiveBiasesToExploit = emptyList(),
+                negotiationTactics = emptyList()
+            ),
+            actionableInsights = profile.actionableInsights.filterNot { it.category in RESTRICTED_INSIGHT_CATEGORIES }
         )
     }
 
@@ -1535,16 +1608,21 @@ object ForensicMathEngine {
             (fallacies.firstOrNull() ?: "absolutist certainty markers")
         } and artificial urgency (${rawRisk}/100 risk) to bypass verification. Let's isolate the verifiable telemetry from the rhetorical wrapper before deciding.\""
 
-        // 7. AEGIS <-> Reema Post-Quantum KeyBinding Attestation (DESIGN-aegis-reema-seam.md)
+        // 7. AEGIS <-> Reema KeyBinding PLACEHOLDER (DESIGN-aegis-reema-seam.md)
+        // IMPORTANT: nothing below is real cryptography. No keys are generated and nothing is signed;
+        // the values are SHA-256 digests shaped like the real format so the UI/export schema can be built.
+        // Replace with real ECDSA P-256 (Android Keystore) + ML-DSA-65 signing before treating as attestation.
         val didSuffix = sha256("did:p256:${subject.handle}:${subject.provSha256}").take(28)
-        val blake2bSim = sha256("reema:blake2b:x25519:mldsa65:${subject.stixId}").take(44)
+        val simulatedRoutingAddress = sha256("reema:blake2b:x25519:mldsa65:${subject.stixId}").take(44)
         val mldsaPk = sha256("mldsa65:pk:${subject.provSha256}").take(36)
         val keyBindingJson = JSONObject().apply {
             put("@context", "https://aegis.example/v1")
             put("type", "KeyBinding")
+            put("simulated", true)
+            put("warning", "PLACEHOLDER: values are SHA-256 digests, not keys or signatures. Not verifiable.")
             put("did", "did:key:z6Mk$didSuffix")
             put("cryptoAegis", "WebCrypto ECDSA P-256 (Statement & Provenance Signer)")
-            put("routingAddress", blake2bSim)
+            put("routingAddress", simulatedRoutingAddress)
             put("cryptoReemaSpine", "libsodium X25519 + ML-DSA-65 + ML-KEM-768 (Post-Quantum Session Spine)")
             put("signPk", "mldsa65:$mldsaPk")
             put("subjectHandle", subject.handle)

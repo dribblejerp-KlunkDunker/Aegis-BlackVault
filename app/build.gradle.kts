@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.aegisblackvault.kxmpzq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "3.5"
+    versionCode = 2
+    versionName = "3.6"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -43,7 +43,9 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8 shrinking/obfuscation on for release. Room, Firebase and Compose ship their own consumer rules;
+      // see proguard-rules.pro for project rules. Verify a release build before publishing (roadmap Phase 6).
+      isMinifyEnabled = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -79,6 +81,9 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+// Export Room schema JSON so migrations can be reviewed and tested (AegisDatabase exportSchema = true).
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

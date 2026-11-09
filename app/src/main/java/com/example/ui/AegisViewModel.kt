@@ -6,6 +6,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PersistableBundle
+import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,6 +17,7 @@ import com.example.engine.ForensicMathEngine
 import com.example.model.*
 import com.example.network.MultiAiAndDataPortabilityService
 import com.example.network.OsintScraperService
+import com.example.security.SecureKeyVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -35,7 +38,7 @@ data class AegisUiState(
     val rawSocialEntities: List<RawSocialMediaEntity> = emptyList(),
     val linguisticProfileEntities: List<LinguisticPersonalityProfileEntity> = emptyList(),
     val mindMapHierarchyEntities: List<MindMapHierarchyEntity> = emptyList(),
-    val scraperUri: String = "torvalds",
+    val scraperUri: String = "",
     val selectedPlatformMode: ScraperPlatformMode = ScraperPlatformMode.ALL,
     val httpProbes: List<HttpEndpointProbe> = emptyList(),
     val isScraping: Boolean = false,
@@ -53,7 +56,8 @@ data class AegisUiState(
         AiProviderEngine.PERPLEXITY to AiProviderEngine.PERPLEXITY.defaultModelId
     ),
     val inAppApiKeys: Map<AiProviderEngine, String> = emptyMap(),
-    val aiDirectivePrompt: String = "Synthesize a psycholinguistic playbook: (1) What makes them tick, (2) Exact rapport & communication openers, (3) Cognitive biases & negotiation leverage, and (4) Stylometric verification.",
+    val aiDirectivePrompt: String = "",
+    val githubTokenConfigured: Boolean = false,
     val aiSynthesisState: AiSynthesisState = AiSynthesisState.Idle,
     val selectedExportFormat: DataExportFormat = DataExportFormat.AGENT_HANDOFF,
     val telemetryLogs: List<TelemetryLog> = listOf(
@@ -81,7 +85,11 @@ data class AegisUiState(
 class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: AegisRepository
-    private val scraperService = OsintScraperService()
+    private val keyVault = SecureKeyVault(application)
+
+    /** Built per use so a newly saved GitHub token takes effect immediately. */
+    private val scraperService: OsintScraperService
+        get() = OsintScraperService(githubToken = keyVault.get(SecureKeyVault.GITHUB_TOKEN))
     private val aiAndPortabilityService = MultiAiAndDataPortabilityService()
     private val prefs = application.getSharedPreferences("aegis_ai_model_vault", Context.MODE_PRIVATE)
 
@@ -95,16 +103,20 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         // Restore persisted model choices and optional in-app API key overrides
         val savedModels = AiProviderEngine.entries.associateWith { provider ->
             prefs.getString("model_${provider.name}", provider.defaultModelId)
-                ?.takeIf { it.isNotBlank() }
+                ?.takeIf { it.isNotBlank() && it !in AiProviderEngine.RETIRED_MODEL_IDS }
                 ?: provider.defaultModelId
         }
-        val savedKeys = AiProviderEngine.entries.associateWith { provider ->
-            prefs.getString("key_${provider.name}", "").orEmpty()
-        }
+        // API keys now live in the Keystore-encrypted vault; move any legacy plaintext keys over once.
+        keyVault.migrateLegacyPlaintext(
+            legacyPrefs = prefs,
+            legacyKeyToVaultName = AiProviderEngine.entries.associate { "key_${it.name}" to it.secretKeyName }
+        )
+        val savedKeys = AiProviderEngine.entries.associateWith { provider -> keyVault.get(provider.secretKeyName) }
         _uiState.update {
             it.copy(
                 selectedModelByProvider = savedModels,
-                inAppApiKeys = savedKeys
+                inAppApiKeys = savedKeys,
+                githubTokenConfigured = keyVault.get(SecureKeyVault.GITHUB_TOKEN).isNotEmpty()
             )
         }
 
@@ -291,7 +303,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateInAppApiKey(apiKey: String, provider: AiProviderEngine = _uiState.value.selectedAiProvider) {
         val cleaned = apiKey.trim()
-        prefs.edit { putString("key_${provider.name}", cleaned) }
+        keyVault.put(provider.secretKeyName, cleaned)
         _uiState.update { current ->
             val nextKeys = current.inAppApiKeys.toMutableMap().apply {
                 put(provider, cleaned)
@@ -300,6 +312,45 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
         val (_, sourceLabel) = aiAndPortabilityService.resolveApiKeyAndSource(provider, cleaned)
         appendLog("KEY_VAULT", "${provider.label} AUTH ROUTING -> [$sourceLabel]")
+    }
+
+    /** Saves (or clears, when blank) an optional GitHub token in the encrypted vault. */
+    fun updateGithubToken(token: String) {
+        keyVault.put(SecureKeyVault.GITHUB_TOKEN, token)
+        val configured = token.isNotBlank()
+        _uiState.update { it.copy(githubTokenConfigured = configured) }
+        appendLog("KEY_VAULT", if (configured) "GITHUB TOKEN STORED (ENCRYPTED) -> 5,000 REQ/HR" else "GITHUB TOKEN CLEARED -> 60 REQ/HR")
+    }
+
+    // ========================================================================
+    // CONSENT GATE
+    // ========================================================================
+
+    /**
+     * Records the consent status for the active subject, appends a timestamped entry to its provenance
+     * audit trail, and recomputes all scores from stored artifacts. Restricted outputs appear only when
+     * the new status is SELF or CONSENTED; switching back to UNVERIFIED strips them again on save.
+     * Demo personas are fixed and cannot be changed.
+     */
+    fun setSubjectConsent(status: ConsentStatus) {
+        val active = _uiState.value.activeSubject ?: return
+        if (active.consentStatus == ConsentStatus.DEMO || status == ConsentStatus.DEMO) return
+        if (active.consentStatus == status) return
+
+        viewModelScope.launch {
+            val auditEntry = "CONSENT:${status.name}@${OsintScraperService().currentIsoUtc()}"
+            val withConsent = active.copy(
+                consentStatus = status,
+                dataProvenance = if (active.dataProvenance.isBlank()) auditEntry else "${active.dataProvenance} | $auditEntry"
+            )
+            val updated = scraperService.recomputeFromArtifacts(withConsent)
+            val allCurrent = listOf(updated) + _uiState.value.profiles.filter { it.id != updated.id }
+            repository.saveProfile(updated, allCurrent, _uiState.value.triplets)
+            appendLog(
+                "CONSENT",
+                "[${updated.handle}] CONSENT -> ${status.label}. RESTRICTED OUTPUTS ${if (status.unlocksRestricted) "COMPUTED" else "WITHHELD"}. RECORDED IN PROVENANCE TRAIL."
+            )
+        }
     }
 
     fun resolveProviderAuthStatus(provider: AiProviderEngine = _uiState.value.selectedAiProvider): String {
@@ -413,7 +464,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         val subject = _uiState.value.activeSubject ?: return
         val payload = buildFormattedPayload(format)
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        clipboard?.setPrimaryClip(ClipData.newPlainText("Aegis_${subject.handle}_${format.name}", payload))
+        clipboard?.setPrimaryClip(sensitiveClip("Aegis_${subject.handle}_${format.name}", payload))
         _uiState.update {
             it.copy(
                 exportBannerMessage = "Copied ${format.label} (${payload.length} chars) for [${subject.handle}] to clipboard — ready to paste into Claude, Gemini, or Perplexity."
@@ -728,47 +779,55 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         val patches = _uiState.value.astPatches.values.toList()
         viewModelScope.launch {
             try {
-                val stixJson = ForensicMathEngine.buildStix21BundleJson(subject, patches)
-                val zipBytes = ForensicMathEngine.createProjectZipBytes(subject, patches, stixJson)
-                val outFile = File(context.cacheDir, "aegis_blackvault_${subject.handle.lowercase(Locale.US)}.zip")
-                outFile.writeBytes(zipBytes)
+                val safeHandle = subject.handle.lowercase(Locale.US).replace(Regex("[^a-z0-9_-]"), "_").take(40)
+                val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                val formattedPayload = buildFormattedPayload(format)
 
-                val handoffPayload = buildFormattedPayload(DataExportFormat.AGENT_HANDOFF)
-                val formattedPayload = if (format == DataExportFormat.PKZIP_STIX) handoffPayload else buildFormattedPayload(format)
-                val extFile = File(
-                    context.cacheDir,
-                    "aegis_handoff_${subject.handle.lowercase(Locale.US)}.${format.extension}"
-                )
-                if (format == DataExportFormat.PKZIP_STIX) {
-                    extFile.writeBytes(zipBytes)
-                } else {
-                    extFile.writeText(formattedPayload, Charsets.UTF_8)
+                val shareIntent = withContext(Dispatchers.IO) {
+                    if (format == DataExportFormat.PKZIP_STIX) {
+                        // Share the actual ZIP through a FileProvider content:// URI (previously the ZIP was
+                        // written to cache and never shared; only text went out).
+                        val stixJson = ForensicMathEngine.buildStix21BundleJson(subject, patches)
+                        val zipBytes = ForensicMathEngine.createProjectZipBytes(subject, patches, stixJson)
+                        val zipFile = File(exportDir, "aegis_blackvault_$safeHandle.zip")
+                        zipFile.writeBytes(zipBytes)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", zipFile)
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "application/zip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            putExtra(Intent.EXTRA_SUBJECT, "AEGIS // BLACKVAULT EXPORT (${format.label}) — ${subject.handle}")
+                            clipData = ClipData.newRawUri(zipFile.name, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                    } else {
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "AEGIS // BLACKVAULT EXPORT (${format.label}) — ${subject.handle}")
+                            putExtra(Intent.EXTRA_TEXT, formattedPayload)
+                        }
+                    }
                 }
 
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                clipboard?.setPrimaryClip(
-                    ClipData.newPlainText(
-                        "Aegis_Agent_Handoff_${subject.handle}",
-                        handoffPayload
-                    )
-                )
-
+                // The full dossier is no longer silently copied to the clipboard as a side effect of sharing.
                 _uiState.update {
-                    it.copy(
-                        exportBannerMessage = "READY FOR AGENT: Copied Agent Handoff Bundle (${handoffPayload.length / 1024} KB) to clipboard + packaged ${outFile.name} (${zipBytes.size / 1024} KB)."
-                    )
+                    it.copy(exportBannerMessage = "Ready to share ${format.label} for [${subject.handle}] (consent: ${subject.consentStatus.label}).")
                 }
-                appendLog("AGENT_HANDOFF", "PACKAGED ${format.label} + PKZIP ARCHIVE (${zipBytes.size} BYTES) + COPIED HANDOFF JSON TO CLIPBOARD FOR [${subject.handle}]")
-
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "AEGIS // BLACKVAULT AGENT HANDOFF (${format.label}) — ${subject.handle}")
-                    putExtra(Intent.EXTRA_TEXT, formattedPayload)
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "Send Aegis Bundle to Agent (${format.label})"))
+                appendLog("EXPORT", "SHARING ${format.label} FOR [${subject.handle}] // PROVENANCE: ${subject.dataProvenance.ifBlank { "UNKNOWN" }}")
+                context.startActivity(Intent.createChooser(shareIntent, "Share Aegis export (${format.label})"))
             } catch (e: Exception) {
-                appendLog("EXPORT_ERR", "Export notification: ${e.message}")
+                appendLog("EXPORT_ERR", "Export failed: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
+
+    /**
+     * Clipboard content flagged as sensitive so Android 13+ hides it from the clipboard preview
+     * and keyboard suggestions (the extra is ignored on older versions).
+     */
+    private fun sensitiveClip(label: String, text: String): ClipData =
+        ClipData.newPlainText(label, text).apply {
+            description.extras = PersistableBundle().apply {
+                putBoolean("android.content.extra.IS_SENSITIVE", true)
+            }
+        }
 }

@@ -2,6 +2,8 @@ package com.example.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.engine.ForensicMathEngine
 import com.example.model.*
 import kotlinx.coroutines.flow.Flow
@@ -137,8 +139,10 @@ interface AegisDao {
         KnowledgeTripletEntity::class,
         AstPatchEntity::class
     ],
-    version = 3,
-    exportSchema = false
+    version = 4,
+    // Schema JSON is exported to app/schemas (see room.schemaLocation in app/build.gradle.kts)
+    // so future migrations can be written and tested against real schemas.
+    exportSchema = true
 )
 abstract class AegisDatabase : RoomDatabase() {
     abstract fun aegisDao(): AegisDao
@@ -147,13 +151,28 @@ abstract class AegisDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AegisDatabase? = null
 
+        /**
+         * v3 -> v4: adds consent status, collected word count and data provenance to subject_profiles.
+         * Existing dossiers keep their data and start as UNVERIFIED with unknown provenance.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN consentStatus TEXT NOT NULL DEFAULT 'UNVERIFIED'")
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN corpusWordCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN dataProvenance TEXT NOT NULL DEFAULT 'UNKNOWN (pre-v4)'")
+            }
+        }
+
         fun getInstance(context: Context): AegisDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AegisDatabase::class.java,
                     "aegis_blackvault.db"
-                ).fallbackToDestructiveMigration(dropAllTables = true).build()
+                )
+                    // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
+                    .addMigrations(MIGRATION_3_4)
+                    .build()
                 INSTANCE = instance
                 instance
             }
@@ -184,6 +203,10 @@ class AegisRepository(private val dao: AegisDao) {
         allProfiles: List<SubjectProfile> = emptyList(),
         triplets: List<KnowledgeTripletEntity> = emptyList()
     ) {
+        // Single persistence choke point: restricted inferences are never stored for subjects
+        // without recorded consent, no matter which screen or service produced the profile.
+        @Suppress("NAME_SHADOWING")
+        val profile = ForensicMathEngine.applyConsentGate(profile)
         val subjectEntity = profile.toEntity()
         val rawEntities = profile.toRawSocialMediaEntities()
         val lingEntity = profile.toLinguisticProfileEntity()
@@ -365,7 +388,10 @@ class AegisRepository(private val dao: AegisDao) {
             linguisticProfile = nullLingProfile,
             healedPatchId = "AST-PATCH-993AFX",
             provSha256 = nullHash,
-            updatedAt = now
+            updatedAt = now,
+            consentStatus = ConsentStatus.DEMO,
+            corpusWordCount = nullEval.tokenCount,
+            dataProvenance = "DEMO_SEED (fictional persona)"
         )
 
         // Seed 2: V_KOVACS
@@ -480,7 +506,10 @@ class AegisRepository(private val dao: AegisDao) {
             linguisticProfile = kovacsLingProfile,
             healedPatchId = "AST-PATCH-771CZX",
             provSha256 = kovacsHash,
-            updatedAt = now - 5000
+            updatedAt = now - 5000,
+            consentStatus = ConsentStatus.DEMO,
+            corpusWordCount = kovacsEval.tokenCount,
+            dataProvenance = "DEMO_SEED (fictional persona)"
         )
 
         val seedTriplets = listOf(

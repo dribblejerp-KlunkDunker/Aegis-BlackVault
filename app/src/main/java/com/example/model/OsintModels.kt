@@ -546,85 +546,64 @@ enum class AiProviderEngine(
         label = "GOOGLE GEMINI",
         defaultModelId = "gemini-3.8-flash",
         secretKeyName = "GEMINI_API_KEY",
+        // Current IDs per Google's deprecations page (checked 2026-11-08). gemini-2.5-pro/-flash shut down
+        // Dec 1 2026, gemini-2.0-flash is past its shutdown date, gemini-1.5-pro is gone.
         presetModels = listOf(
             AiModelOption(
                 modelId = "gemini-3.8-flash",
                 displayName = "Gemini 3.8 Flash",
                 tierBadge = "DEFAULT • FAST",
-                summary = "High-speed multimodal OSINT & LIWC profiling (Firebase AI + Direct Key)"
+                summary = "Newest Flash model (Firebase AI Logic or direct key)"
             ),
             AiModelOption(
-                modelId = "gemini-2.5-pro",
-                displayName = "Gemini 2.5 Pro",
+                modelId = "gemini-3.1-pro-preview",
+                displayName = "Gemini 3.1 Pro (preview)",
                 tierBadge = "DEEP REASONING",
-                summary = "Maximum reasoning depth for complex stylometry & negotiation strategy"
+                summary = "Highest reasoning depth; preview model, may change"
             ),
             AiModelOption(
-                modelId = "gemini-2.5-flash",
-                displayName = "Gemini 2.5 Flash",
+                modelId = "gemini-3.6-flash",
+                displayName = "Gemini 3.6 Flash",
                 tierBadge = "BALANCED",
-                summary = "Low-latency thinking model for rapid behavioural synthesis"
+                summary = "Previous Flash generation"
+            ),
+            AiModelOption(
+                modelId = "gemini-3.5-flash-lite",
+                displayName = "Gemini 3.5 Flash-Lite",
+                tierBadge = "LIGHT",
+                summary = "High-throughput structured extraction"
             ),
             AiModelOption(
                 modelId = "gemini-2.5-flash-lite",
                 displayName = "Gemini 2.5 Flash-Lite",
-                tierBadge = "ULTRA-LIGHT",
-                summary = "High-throughput batch artifact extraction"
-            ),
-            AiModelOption(
-                modelId = "gemini-2.0-flash",
-                displayName = "Gemini 2.0 Flash",
-                tierBadge = "WORKHORSE",
-                summary = "Low-latency multimodal analysis and structured JSON extraction"
-            ),
-            AiModelOption(
-                modelId = "gemini-1.5-pro",
-                displayName = "Gemini 1.5 Pro",
-                tierBadge = "2M CONTEXT",
-                summary = "Long-context corpus cross-examination across full repo histories"
+                tierBadge = "LEGACY LIGHT",
+                summary = "Older lightweight model; no shutdown date announced"
             )
         )
     ),
     CLAUDE(
         label = "ANTHROPIC CLAUDE",
-        defaultModelId = "claude-3-7-sonnet-20250219",
+        defaultModelId = "claude-sonnet-5-5",
         secretKeyName = "ANTHROPIC_API_KEY",
+        // Claude 3.x IDs were retired (Feb 2026); requests to them fail.
         presetModels = listOf(
             AiModelOption(
-                modelId = "claude-3-7-sonnet-20250219",
-                displayName = "Claude 3.7 Sonnet",
-                tierBadge = "DEFAULT • HYBRID",
-                summary = "Extended reasoning & nuanced psychological / LIWC decomposition"
+                modelId = "claude-sonnet-5-5",
+                displayName = "Claude Sonnet 5.5",
+                tierBadge = "DEFAULT • BALANCED",
+                summary = "Strong analysis at moderate cost and latency"
             ),
             AiModelOption(
-                modelId = "claude-sonnet-4-20250514",
-                displayName = "Claude Sonnet 4",
-                tierBadge = "FRONTIER SONNET",
-                summary = "Next-generation high-precision behavioural & code analysis"
+                modelId = "claude-opus-5-5",
+                displayName = "Claude Opus 5.5",
+                tierBadge = "DEEPEST",
+                summary = "Most careful long-document analysis"
             ),
             AiModelOption(
-                modelId = "claude-opus-4-20250514",
-                displayName = "Claude Opus 4",
-                tierBadge = "FRONTIER OPUS",
-                summary = "Deepest executive profiling, counter-manipulation & strategy"
-            ),
-            AiModelOption(
-                modelId = "claude-3-5-sonnet-20241022",
-                displayName = "Claude 3.5 Sonnet",
-                tierBadge = "PROVEN v2",
-                summary = "Industry standard for XML-structured dossier & AST analysis"
-            ),
-            AiModelOption(
-                modelId = "claude-3-5-haiku-20241022",
-                displayName = "Claude 3.5 Haiku",
-                tierBadge = "FAST TACTICAL",
-                summary = "Rapid rapport openers and real-time conversation scripts"
-            ),
-            AiModelOption(
-                modelId = "claude-3-opus-20240229",
-                displayName = "Claude 3 Opus",
-                tierBadge = "DEEP ARCHIVE",
-                summary = "Classic high-nuance literary & stylometric author attribution"
+                modelId = "claude-haiku-5-5",
+                displayName = "Claude Haiku 5.5",
+                tierBadge = "FAST",
+                summary = "Quick summaries and structured extraction"
             )
         )
     ),
@@ -666,14 +645,28 @@ enum class AiProviderEngine(
             AiModelOption(
                 modelId = "r1-1776",
                 displayName = "R1-1776 (Offline CoT)",
-                tierBadge = "UNCENSORED CoT",
-                summary = "Perplexity's post-trained DeepSeek R1 reasoning model without web filter"
+                tierBadge = "OFFLINE CoT",
+                summary = "Reasoning model with no live web search"
             )
         )
     );
 
     val modelId: String
         get() = defaultModelId
+
+    companion object {
+        /** Saved model choices pointing at these are reset to the provider default on startup. */
+        val RETIRED_MODEL_IDS = setOf(
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash"
+        )
+    }
 }
 
 enum class DataExportFormat(
@@ -759,7 +752,11 @@ data class SubjectProfileEntity(
     val linguisticProfileJson: String,
     val healedPatchId: String,
     val provSha256: String,
-    val updatedAt: Long
+    val updatedAt: Long,
+    // Added in schema v4 (see AegisDatabase.MIGRATION_3_4)
+    val consentStatus: String = ConsentStatus.UNVERIFIED.name,
+    val corpusWordCount: Int = 0,
+    val dataProvenance: String = ""
 ) {
     fun toDomain(
         relationalArtifacts: List<RawSocialMediaEntity>? = null,
@@ -852,8 +849,48 @@ data class SubjectProfileEntity(
             linguisticProfile = lingProfile,
             healedPatchId = healedPatchId,
             provSha256 = provSha256,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            consentStatus = ConsentStatus.fromName(consentStatus),
+            corpusWordCount = corpusWordCount,
+            dataProvenance = dataProvenance
         )
+    }
+}
+
+/**
+ * Consent state for a profiled subject. Restricted inferences (persuasion/leverage playbooks,
+ * cognitive-bias exploitation, Dark Triad, violence-pathway and chrono/geo location inference)
+ * are only computed and displayed for SELF or CONSENTED subjects.
+ */
+enum class ConsentStatus(val label: String, val description: String) {
+    UNVERIFIED("UNVERIFIED", "No consent recorded. Restricted inferences are withheld."),
+    SELF("SELF-ANALYSIS", "You are analyzing your own writing."),
+    CONSENTED("CONSENTED", "The subject has given informed consent to this analysis."),
+    DEMO("DEMO / FICTIONAL", "Built-in fictional demo persona; not a real person.");
+
+    val unlocksRestricted: Boolean
+        get() = this != UNVERIFIED
+
+    companion object {
+        fun fromName(raw: String?): ConsentStatus =
+            entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: UNVERIFIED
+    }
+}
+
+/**
+ * Minimum-corpus thresholds. Function-word stylometry (Burrows' Delta) is unreliable below a few
+ * thousand words; lexicon rates are noisy below a few hundred. Scores below these thresholds are
+ * flagged rather than presented as findings.
+ */
+object DataSufficiency {
+    const val MIN_WORDS_FOR_TRAITS = 300
+    const val MIN_WORDS_FOR_STYLOMETRY = 1500
+
+    fun labelFor(wordCount: Int): String = when {
+        wordCount <= 0 -> "NO DATA COLLECTED"
+        wordCount < MIN_WORDS_FOR_TRAITS -> "INSUFFICIENT DATA ($wordCount words; scores not meaningful)"
+        wordCount < MIN_WORDS_FOR_STYLOMETRY -> "LIMITED DATA ($wordCount words; heuristic estimate, stylometry withheld)"
+        else -> "HEURISTIC ESTIMATE ($wordCount words; not a validated psychometric instrument)"
     }
 }
 
@@ -1119,8 +1156,22 @@ data class SubjectProfile(
     val linguisticProfile: LinguisticPersonalityProfile = LinguisticPersonalityProfile(),
     val healedPatchId: String,
     val provSha256: String,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /** Whether the person analyzed is the user themself or has consented. Gates restricted outputs. */
+    val consentStatus: ConsentStatus = ConsentStatus.UNVERIFIED,
+    /** Number of word tokens actually collected for this subject (0 = no live data). */
+    val corpusWordCount: Int = 0,
+    /** Where the data came from, e.g. "LIVE: GITHUB_API", "NO_DATA", "DEMO_SEED", "MANUAL". */
+    val dataProvenance: String = ""
 ) {
+    /** True when restricted inferences (leverage, Dark Triad, violence, chrono/geo) may be computed and shown. */
+    val restrictedOutputsUnlocked: Boolean
+        get() = consentStatus.unlocksRestricted
+
+    /** Human-readable data-quality label shown next to every score. */
+    val dataQualityLabel: String
+        get() = DataSufficiency.labelFor(corpusWordCount)
+
     fun toEntity(): SubjectProfileEntity {
         val zObj = JSONObject()
         zScores.forEach { (k, v) -> zObj.put(k, v.toDouble()) }
@@ -1164,7 +1215,10 @@ data class SubjectProfile(
             linguisticProfileJson = linguisticProfile.toJsonObject().toString(),
             healedPatchId = healedPatchId,
             provSha256 = provSha256,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            consentStatus = consentStatus.name,
+            corpusWordCount = corpusWordCount,
+            dataProvenance = dataProvenance
         )
     }
 

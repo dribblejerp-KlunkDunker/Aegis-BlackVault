@@ -19,3 +19,15 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# --- Aegis Blackvault (v3.6) ---
+# Keep line numbers so release crash reports are readable.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+# Enum names are persisted (ConsentStatus, AiProviderEngine) and read back with name lookups.
+-keepclassmembers enum com.example.model.** { *; }
+# OkHttp / Okio: suppress warnings about optional platform classes.
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**

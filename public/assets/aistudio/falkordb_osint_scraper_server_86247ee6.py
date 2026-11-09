@@ -10,6 +10,18 @@ Remediated Engineering Architecture (v3.5 — Includes AI Auto-Heal Protocol):
    (/api/v1/heal) for TikTok, Instagram, YouTube, Reddit, Facebook, and OnlyFans.
 4. Parameterized FalkorDB Cypher execution (prevents Cypher injection) and
    RFC 4122 UUIDv5 + FIPS 180-4 SHA-256 W3C PROV-O provenance signing.
+
+SECURITY (v3.6 audit fixes):
+- Every endpoint except /api/v1/health requires the X-API-Key header (or ?key= on the
+  websocket), compared in constant time against the AEGIS_API_KEY environment variable.
+  With no key configured the server refuses requests instead of running open.
+- CORS is limited to the origins listed in AEGIS_ALLOWED_ORIGINS (comma separated); none by default.
+- /api/v1/cypher runs through FalkorDB GRAPH.RO_QUERY, which rejects any write at the
+  database level. The keyword blocklist stays only as an early, friendly error.
+- /api/v1/scrape no longer fabricates data. It previously invented a corpus, activity hours
+  and Dark Triad scores for any URL. Collection now lives in the app's connectors (roadmap
+  Phase 3); this endpoint returns 501 until a real connector backend exists.
+- Binds to 127.0.0.1 by default when run directly.
 """
 
 import asyncio
@@ -25,8 +37,10 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import hmac
+
 import httpx
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -262,12 +276,17 @@ class FalkorGraphAdapter:
         return triplet
 
     def execute_readonly_cypher(self, cypher_query: str) -> Dict[str, Any]:
+        if len(cypher_query) > 2000:
+            raise HTTPException(status_code=400, detail="Query too long (max 2000 characters).")
+        # Friendly early error only. The real guarantee is GRAPH.RO_QUERY below, which the database
+        # enforces (the old regex alone could be bypassed, e.g. via procedure calls such as
+        # CALL db.idx.fulltext.createNodeIndex, which has no word boundary before "create").
         forbidden = re.search(r"\b(DELETE|DETACH|DROP|REMOVE|CREATE|SET|MERGE)\b", cypher_query, re.IGNORECASE)
         if forbidden:
             raise HTTPException(status_code=400, detail="Mutating keywords disallowed in read-only Cypher endpoint.")
         if self._try_connect() and self.graph is not None:
             try:
-                res = self.graph.query(cypher_query)
+                res = self.graph.ro_query(cypher_query)
                 rows = [[str(cell) for cell in record] for record in res.result_set]
                 return {"engine": "FALKORDB_NATIVE", "connected": True, "rows": rows, "triplets": self.fallback_triplets[:15]}
             except Exception as exc:
@@ -389,7 +408,28 @@ class CypherRequest(BaseModel):
 
 
 app = FastAPI(title="AEGIS // FalkorDB OSINT & AI Auto-Heal Backend", version="3.5.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+AEGIS_API_KEY = os.environ.get("AEGIS_API_KEY", "").strip()
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("AEGIS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,  # empty by default: no browser origin may call the API
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
+
+
+def _key_matches(presented: Optional[str]) -> bool:
+    if not AEGIS_API_KEY:
+        return False
+    return hmac.compare_digest((presented or "").encode(), AEGIS_API_KEY.encode())
+
+
+async def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    if not AEGIS_API_KEY:
+        raise HTTPException(status_code=503, detail="Server has no AEGIS_API_KEY configured; refusing to run open.")
+    if not _key_matches(x_api_key):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key.")
 
 active_websockets: Set[WebSocket] = set()
 
@@ -417,7 +457,7 @@ async def health_check() -> Dict[str, Any]:
     }
 
 
-@app.post("/api/v1/heal")
+@app.post("/api/v1/heal", dependencies=[Depends(require_api_key)])
 async def ai_auto_heal_endpoint(req: HealRequest) -> Dict[str, Any]:
     plat_key = detect_walled_garden(req.target_uri or req.platform) or req.platform.lower()
     sig = WALLED_GARDEN_SIGNATURES.get(
@@ -436,7 +476,7 @@ async def ai_auto_heal_endpoint(req: HealRequest) -> Dict[str, Any]:
         "deprecated_selector": sig["deprecated_selector"],
         "new_selector": sig["healed_selector"],
         "strategy": sig["strategy"],
-        "confidence": "98.4%",
+        "confidence": "UNVERIFIED (static catalog entry; nothing was tested against the live site)",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     HEALED_PLATFORM_REGISTRY[plat_key] = patch_record
@@ -444,78 +484,28 @@ async def ai_auto_heal_endpoint(req: HealRequest) -> Dict[str, Any]:
     return {"status": "HEALED", **patch_record}
 
 
-@app.post("/api/v1/scrape")
+@app.post("/api/v1/scrape", dependencies=[Depends(require_api_key)])
 async def scrape_and_ingest(req: ScrapeRequest) -> Dict[str, Any]:
-    wg_key = detect_walled_garden(req.target_uri)
-    if wg_key and not req.force_heal and wg_key not in HEALED_PLATFORM_REGISTRY:
-        sig = WALLED_GARDEN_SIGNATURES[wg_key]
-        drift_event = {
-            "event": "DOM_DRIFT_DETECTED",
-            "platform": sig["platform"],
-            "deprecated_selector": sig["deprecated_selector"],
-            "proposed_selector": sig["healed_selector"],
-            "strategy": sig["strategy"],
-        }
-        await broadcast_event(drift_event)
-        return drift_event
-
-    raw_handle = re.sub(r"^https?://", "", req.target_uri.strip()).split("/")[-1].upper().replace("-", "_") or "TARGET_NODE"
-    handle = re.sub(r"[^A-Z0-9_]", "_", raw_handle.lstrip("@"))[:18]
-
-    corpus = (
-        f"OSINT telemetry artifact collected from {req.target_uri} ({req.source_type}). "
-        f"The consensus architecture requires deterministic verification across all distributed nodes. "
-        f"Ensure that the key rotation and header validation complete before the maintenance window closes."
-    )
-    stylo = compute_stylometry_and_ocean(corpus)
-    chrono = compute_diurnal_trough([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-    async with httpx.AsyncClient(timeout=4.0) as client:
-        geo = await resolve_coordinates(None, chrono["inferred_utc_offset"], client)
-
-    prov_sha256 = hashlib.sha256(f"{handle}:{req.target_uri}:{stylo['burrows_delta']}".encode()).hexdigest()
-    stix_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"aegis://identity/{handle}/{prov_sha256[:16]}"))
-
-    triplet = falkor_adapter.upsert_triplet(
-        subject=handle,
-        predicate=f"{req.source_type} (Δ={stylo['burrows_delta']})",
-        obj="NULL_ROUTER" if stylo["burrows_delta"] < 0.55 else f"Cluster_UTC{chrono['inferred_utc_offset']:+d}",
-        confidence=round(stylo["stylo_match"] / 100.0, 2),
-        metadata={"burrows_delta": stylo["burrows_delta"], "utc_offset": chrono["inferred_utc_offset"], "prov_sha256": prov_sha256},
+    # The previous implementation fabricated a corpus, activity hours, coordinates and Dark Triad scores
+    # for any URL and linked the result to a demo persona. Nothing was collected. Until a real,
+    # opt-in connector backend exists (roadmap Phase 3), say so instead of returning invented data.
+    raise HTTPException(
+        status_code=501,
+        detail="Server-side collection is not implemented. Use the app's connectors; see roadmap Phase 3.",
     )
 
-    subject_node = {
-        "id": f"subj-{stix_uuid[:8]}",
-        "stixUuid": stix_uuid,
-        "handle": handle,
-        "codeId": f"#FK-{prov_sha256[:4].upper()}",
-        "alias": f"{req.source_type} // {req.target_uri[:32]}",
-        "cluster": "Cluster-05: FalkorDB Live Ingest",
-        "loc": geo["loc_label"],
-        "lat": geo["lat"],
-        "lon": geo["lon"],
-        "utcOffset": chrono["inferred_utc_offset"],
-        "burrowsDelta": stylo["burrows_delta"],
-        "styloMatch": stylo["stylo_match"],
-        "ocean": stylo["ocean"],
-        "darkTriad": stylo["dark_triad"],
-        "zScores": stylo["z_scores"],
-        "frontStageQuote": corpus[:140],
-        "backStageQuote": corpus[140:],
-        "provSha256": prov_sha256,
-    }
 
-    packet = {"event": "FALKOR_SCRAPE_INGESTED", "subject": subject_node, "triplet": triplet, "chrono": chrono, "prov_sha256": prov_sha256}
-    await broadcast_event(packet)
-    return packet
-
-
-@app.post("/api/v1/cypher")
+@app.post("/api/v1/cypher", dependencies=[Depends(require_api_key)])
 async def run_cypher_query(req: CypherRequest) -> Dict[str, Any]:
     return falkor_adapter.execute_readonly_cypher(req.query)
 
 
 @app.websocket("/ws/telemetry")
 async def telemetry_websocket(websocket: WebSocket) -> None:
+    # Browsers cannot set headers on a websocket, so the key is accepted as ?key=...
+    if not _key_matches(websocket.query_params.get("key")):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     active_websockets.add(websocket)
     try:
@@ -523,3 +513,10 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         active_websockets.discard(websocket)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Loopback only by default; set AEGIS_HOST=0.0.0.0 deliberately (behind TLS) to expose it.
+    uvicorn.run(app, host=os.environ.get("AEGIS_HOST", "127.0.0.1"), port=int(os.environ.get("AEGIS_PORT", "8000")))

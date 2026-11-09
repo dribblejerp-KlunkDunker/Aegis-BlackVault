@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.ForensicMathEngine
+import com.example.model.ConsentStatus
 import com.example.model.SubjectProfile
 import com.example.ui.theme.*
 import java.util.Locale
@@ -36,10 +37,12 @@ fun PsychometricScreen(
     selectedSpectrumToken: String,
     onSelectSpectrumToken: (String) -> Unit,
     onSelectComparisonSubject: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSetConsent: (ConsentStatus) -> Unit = {}
 ) {
     var activeSubTab by remember { mutableStateOf("PLAYBOOK") }
     val lp = activeSubject.linguisticProfile
+    val unlocked = activeSubject.restrictedOutputsUnlocked
 
     Column(
         modifier = modifier
@@ -48,6 +51,8 @@ fun PsychometricScreen(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        ConsentAndProvenanceBar(subject = activeSubject, onSetConsent = onSetConsent)
+
         // Sub-Tab Switcher
         Row(
             modifier = Modifier
@@ -161,43 +166,47 @@ fun PsychometricScreen(
                         }
                     }
 
-                    // 2. WHAT MAKES THEM TICK (Core Psychological Drivers, Ego Rewards, Fear/Friction Triggers)
-                    item {
-                        PlaybookSectionCard(
-                            headerTitle = "1. WHAT MAKES ${activeSubject.handle} TICK (CORE DRIVERS)",
-                            accentColor = PhosphorGreen,
-                            sections = listOf(
-                                "INTRINSIC PSYCHOLOGICAL DRIVERS" to lp.whatMakesThemTick,
-                                "EGO CRAVINGS & DOPAMINE REWARDS" to lp.egoCravingsAndRewards,
-                                "REACTANCE & FRICTION TRIGGERS (WHAT ANTAGONIZES THEM)" to lp.fearAndFrictionTriggers
+                    if (!unlocked) {
+                        item { RestrictedNotice("Playbook sections (drivers, rapport protocol, persuasion and leverage) are withheld until consent is recorded as Self-analysis or Consented.") }
+                    } else {
+                        // 2. WHAT MAKES THEM TICK (Core Psychological Drivers, Ego Rewards, Fear/Friction Triggers)
+                        item {
+                            PlaybookSectionCard(
+                                headerTitle = "1. WHAT MAKES ${activeSubject.handle} TICK (CORE DRIVERS)",
+                                accentColor = PhosphorGreen,
+                                sections = listOf(
+                                    "INTRINSIC PSYCHOLOGICAL DRIVERS" to lp.whatMakesThemTick,
+                                    "EGO CRAVINGS & DOPAMINE REWARDS" to lp.egoCravingsAndRewards,
+                                    "REACTANCE & FRICTION TRIGGERS (WHAT ANTAGONIZES THEM)" to lp.fearAndFrictionTriggers
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    // 3. HOW TO TALK TO THEM (Communication Protocol, Exact Phrases to Use vs Avoid)
-                    item {
-                        PlaybookSectionCard(
-                            headerTitle = "2. HOW TO TALK TO ${activeSubject.handle} (RAPPORT PROTOCOL)",
-                            accentColor = CyanTelemetry,
-                            sections = listOf(
-                                "LINGUISTIC MIRRORING & CADENCE RULES" to lp.howToTalkToThem,
-                                "HIGH-TRUST EXACT PHRASES TO USE" to lp.exactPhrasesToUse,
-                                "DEALBREAKER PHRASES TO AVOID" to lp.phrasesToAvoid
+                        // 3. HOW TO TALK TO THEM (Communication Protocol, Exact Phrases to Use vs Avoid)
+                        item {
+                            PlaybookSectionCard(
+                                headerTitle = "2. HOW TO TALK TO ${activeSubject.handle} (RAPPORT PROTOCOL)",
+                                accentColor = CyanTelemetry,
+                                sections = listOf(
+                                    "LINGUISTIC MIRRORING & CADENCE RULES" to lp.howToTalkToThem,
+                                    "HIGH-TRUST EXACT PHRASES TO USE" to lp.exactPhrasesToUse,
+                                    "DEALBREAKER PHRASES TO AVOID" to lp.phrasesToAvoid
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    // 4. PERSUASION, INFLUENCE & LEVERAGE DYNAMICS (Cialdini Vectors, Biases, Negotiation)
-                    item {
-                        PlaybookSectionCard(
-                            headerTitle = "3. PERSUASION, INFLUENCE & LEVERAGE MATRIX",
-                            accentColor = AmberSignal,
-                            sections = listOf(
-                                "PSYCHOLOGICAL LEVERAGE & INFLUENCE HOOKS" to lp.persuasionAndLeverageHooks,
-                                "COGNITIVE BIASES & DECISION BLIND SPOTS" to lp.cognitiveBiasesToExploit,
-                                "NEGOTIATION & COUNTER-MANIPULATION TACTICS" to lp.negotiationTactics
+                        // 4. PERSUASION, INFLUENCE & LEVERAGE DYNAMICS (Cialdini Vectors, Biases, Negotiation)
+                        item {
+                            PlaybookSectionCard(
+                                headerTitle = "3. PERSUASION, INFLUENCE & LEVERAGE MATRIX",
+                                accentColor = AmberSignal,
+                                sections = listOf(
+                                    "PSYCHOLOGICAL LEVERAGE & INFLUENCE HOOKS" to lp.persuasionAndLeverageHooks,
+                                    "COGNITIVE BIASES & DECISION BLIND SPOTS" to lp.cognitiveBiasesToExploit,
+                                    "NEGOTIATION & COUNTER-MANIPULATION TACTICS" to lp.negotiationTactics
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -218,7 +227,7 @@ fun PsychometricScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "BIG FIVE (OCEAN) BFI-44 PSYCHOMETRIC BASELINE",
+                                text = "BIG FIVE (OCEAN) HEURISTIC ESTIMATE // ${activeSubject.dataQualityLabel}",
                                 color = PhosphorGreen,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
@@ -245,9 +254,17 @@ fun PsychometricScreen(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            TraitProgressRow("Machiavellianism (Strategic Calculation)", activeSubject.darkTriad.machiavellianism, AmberSignal)
-                            TraitProgressRow("Narcissism (Ego Centrality & Status Drive)", activeSubject.darkTriad.narcissism, RustAccent)
-                            TraitProgressRow("Psychopathy (Callousness / Unfiltered Hostility)", activeSubject.darkTriad.psychopathy, AlarmRed)
+                            if (unlocked) {
+                                TraitProgressRow("Machiavellianism (Strategic Calculation)", activeSubject.darkTriad.machiavellianism, AmberSignal)
+                                TraitProgressRow("Narcissism (Ego Centrality & Status Drive)", activeSubject.darkTriad.narcissism, RustAccent)
+                                TraitProgressRow("Psychopathy (Callousness / Unfiltered Hostility)", activeSubject.darkTriad.psychopathy, AlarmRed)
+                            } else {
+                                Text(
+                                    text = "WITHHELD: Dark Triad estimates require recorded consent.",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
                         }
                     }
 
@@ -752,7 +769,7 @@ fun PsychometricScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "AEGIS <-> REEMA POST-QUANTUM KEYBINDING SEAM (DESIGN-aegis-reema-seam.md)",
+                                text = "AEGIS <-> REEMA KEYBINDING (PLACEHOLDER: NOT SIGNED, NOT VERIFIABLE — SEE ROADMAP PHASE 5)",
                                 color = PhosphorGreen,
                                 fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Bold
@@ -913,5 +930,84 @@ private fun DyadComparisonBar(
                 )
             }
         }
+    }
+}
+
+/**
+ * Consent selector + data provenance + data-quality label, shown above every psychometric view.
+ * Restricted outputs only appear for SELF / CONSENTED (or the built-in DEMO personas).
+ */
+@Composable
+private fun ConsentAndProvenanceBar(
+    subject: SubjectProfile,
+    onSetConsent: (ConsentStatus) -> Unit
+) {
+    val isDemo = subject.consentStatus == ConsentStatus.DEMO
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("consent_bar")
+            .background(ObsidianPanel, RoundedCornerShape(6.dp))
+            .border(
+                1.dp,
+                if (subject.restrictedOutputsUnlocked) PhosphorGreenDim else AmberSignal,
+                RoundedCornerShape(6.dp)
+            )
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "CONSENT: ${subject.consentStatus.label} // ${subject.consentStatus.description}",
+            color = if (subject.restrictedOutputsUnlocked) PhosphorGreen else AmberSignal,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "DATA: ${subject.dataQualityLabel} // SOURCE: ${subject.dataProvenance.ifBlank { "UNKNOWN" }.take(140)}",
+            color = TextSecondary,
+            fontSize = 10.sp
+        )
+        if (!isDemo) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(ConsentStatus.UNVERIFIED, ConsentStatus.SELF, ConsentStatus.CONSENTED).forEach { status ->
+                    val selected = subject.consentStatus == status
+                    Box(
+                        modifier = Modifier
+                            .testTag("consent_${status.name}")
+                            .background(if (selected) AmberSignal else ObsidianBg, RoundedCornerShape(4.dp))
+                            .border(1.dp, if (selected) AmberSignal else PhosphorGreenDim, RoundedCornerShape(4.dp))
+                            .clickable(enabled = !selected) { onSetConsent(status) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = status.label,
+                            color = if (selected) ObsidianBg else PhosphorGreen,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "Only choose Self-analysis for your own writing, or Consented when the person has agreed to this analysis. Every change is recorded in the provenance trail.",
+                color = TextSecondary,
+                fontSize = 9.sp,
+                fontStyle = FontStyle.Italic
+            )
+        }
+    }
+}
+
+@Composable
+private fun RestrictedNotice(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("restricted_notice")
+            .background(ObsidianPanel, RoundedCornerShape(6.dp))
+            .border(1.dp, AmberSignal.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+            .padding(12.dp)
+    ) {
+        Text(text = message, color = AmberSignal, fontSize = 11.sp, lineHeight = 15.sp)
     }
 }

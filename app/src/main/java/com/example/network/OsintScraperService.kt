@@ -15,7 +15,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Live OkHttp Multi-Vector OSINT Scraper Service & Intelligence Combiner:
@@ -31,25 +30,31 @@ import java.util.concurrent.atomic.AtomicInteger
  *    and computes a full Pennebaker LIWC + 50-word Burrows' Delta Linguistic Personality Profile ready for Room @Transaction insert.
  */
 class OsintScraperService(
-    customClient: OkHttpClient? = null
+    customClient: OkHttpClient? = null,
+    /** Optional GitHub token (fine-grained, read-only public access is enough). Raises the limit from 60 to 5,000 req/hr. */
+    private val githubToken: String = ""
 ) {
 
-    private val uaIndex = AtomicInteger(0)
+    companion object {
+        /** Identifies the app honestly. Browser User-Agent spoofing/rotation was removed. */
+        const val USER_AGENT = "AegisBlackvault/3.6 (Android; research workbench)"
 
-    private val userAgents = listOf(
-        "AegisBlackvault-OSINT-Workbench/3.5 (Android; SIGINT-Telemetry)",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
-    )
+        /** Hard cap on bytes read from any single response, to avoid OOM on large or hostile pages. */
+        const val MAX_BODY_BYTES = 2L * 1024 * 1024
+    }
 
     private val telemetryInterceptor = Interceptor { chain ->
-        val ua = userAgents[uaIndex.getAndIncrement() % userAgents.size]
-        val request = chain.request().newBuilder()
-            .header("User-Agent", ua)
+        val original = chain.request()
+        val builder = original.newBuilder()
+            .header("User-Agent", USER_AGENT)
             .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Cache-Control", "no-cache")
-            .build()
-        chain.proceed(request)
+        if (original.url.host == "api.github.com") {
+            builder.header("X-GitHub-Api-Version", "2022-11-28")
+            if (githubToken.isNotBlank()) {
+                builder.header("Authorization", "Bearer ${githubToken.trim()}")
+            }
+        }
+        chain.proceed(builder.build())
     }
 
     private val client: OkHttpClient = customClient ?: OkHttpClient.Builder()
@@ -76,7 +81,7 @@ class OsintScraperService(
                 statusCode in 200..299 -> "$statusCode OK"
                 statusCode == 403 || statusCode == 429 -> "$statusCode RATE_LIMIT/WAF"
                 statusCode > 0 -> "HTTP $statusCode"
-                else -> "OFFLINE / AST_FALLBACK"
+                else -> "NETWORK ERROR (NO DATA)"
             }
             return HttpEndpointProbe(
                 id = "probe-${System.nanoTime()}",
@@ -124,7 +129,11 @@ class OsintScraperService(
                 .build()
             client.newCall(req).execute().use { resp ->
                 val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
-                val rawBody = resp.body?.string()
+                // Bounded read: never pull more than MAX_BODY_BYTES into memory.
+                val rawBody = resp.body?.source()?.let { src ->
+                    src.request(MAX_BODY_BYTES)
+                    src.buffer.readUtf8(minOf(src.buffer.size, MAX_BODY_BYTES))
+                }
                 val bytes = rawBody?.toByteArray(Charsets.UTF_8)?.size ?: 0
                 val server = resp.header("Server")
                     ?: resp.header("x-github-request-id")?.let { "GitHub.com ($it)" }
@@ -144,7 +153,7 @@ class OsintScraperService(
                     timestampHeader = dateHdr
                 )
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
             RawHttpResponse(
                 url = url,
@@ -153,7 +162,7 @@ class OsintScraperService(
                 body = null,
                 latencyMs = elapsed,
                 payloadBytes = 0,
-                serverHeader = "local-ast-bridge",
+                serverHeader = "NETWORK_ERROR: ${e.javaClass.simpleName}: ${e.message?.take(120).orEmpty()}",
                 timestampHeader = currentIsoUtc()
             )
         }
@@ -185,7 +194,7 @@ class OsintScraperService(
         var declaredLocation: String? = null
         var bioText = ""
         var displayName = cleanHandle
-        var followerCount = 120
+        var followerCount = 0
         val repos = mutableListOf<GithubRepoItem>()
         val hfAssets = mutableListOf<HuggingFaceAsset>()
         val liveSources = mutableListOf<String>()
@@ -193,15 +202,20 @@ class OsintScraperService(
 
         val encodedHandle = URLEncoder.encode(cleanHandle, "UTF-8")
 
-        val shouldScrapeGithub = platformMode == ScraperPlatformMode.ALL ||
+        // A blank handle no longer silently falls back to a default account.
+        val hasHandle = cleanHandle.isNotBlank()
+
+        val shouldScrapeGithub = hasHandle && (platformMode == ScraperPlatformMode.ALL ||
             platformMode == ScraperPlatformMode.GITHUB ||
-            trimmed.contains("github.com", ignoreCase = true)
+            trimmed.contains("github.com", ignoreCase = true))
 
-        val shouldScrapeHf = platformMode == ScraperPlatformMode.ALL ||
+        val shouldScrapeHf = hasHandle && (platformMode == ScraperPlatformMode.ALL ||
             platformMode == ScraperPlatformMode.HUGGINGFACE ||
-            trimmed.contains("huggingface.co", ignoreCase = true)
+            trimmed.contains("huggingface.co", ignoreCase = true))
 
-        val shouldScrapeDirectUrl = platformMode == ScraperPlatformMode.DIRECT_URL || isExplicitUrl
+        // Direct page fetches touch the target's site, so (as in OpenOSINT) they require an explicit
+        // URL or explicit DIRECT_URL mode; handles alone never trigger them.
+        val shouldScrapeDirectUrl = isExplicitUrl
 
         // 1. Live GitHub User + Repos + Public Events Scrape (with ISO-8601 Timestamps)
         if (shouldScrapeGithub) {
@@ -217,7 +231,7 @@ class OsintScraperService(
                     displayName = u.optString("name", cleanHandle).takeIf { it.isNotBlank() && it != "null" } ?: cleanHandle
                     declaredLocation = u.optString("location", "").takeIf { it.isNotBlank() && it != "null" }
                     bioText = u.optString("bio", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
-                    followerCount = u.optInt("followers", 120)
+                    followerCount = u.optInt("followers", 0)
                     val updatedAt = u.optString("updated_at", currentIsoUtc()).takeIf { it.isNotBlank() } ?: currentIsoUtc()
                     val company = u.optString("company", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
                     if (bioText.isNotBlank()) {
@@ -251,9 +265,8 @@ class OsintScraperService(
                         val r = arr.getJSONObject(i)
                         val name = r.optString("name", "repo-$i")
                         val fullName = r.optString("full_name", "$cleanHandle/$name")
-                        val desc = r.optString("description", "").takeIf { it.isNotBlank() && it != "null" }
-                            ?: "Repository module for $name"
-                        val lang = r.optString("language", "").takeIf { it.isNotBlank() && it != "null" } ?: "Python"
+                        val desc = r.optString("description", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
+                        val lang = r.optString("language", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
                         val stars = r.optInt("stargazers_count", 0)
                         val forks = r.optInt("forks_count", 0)
                         val htmlUrl = r.optString("html_url", "https://github.com/$fullName")
@@ -277,7 +290,7 @@ class OsintScraperService(
                             )
                         )
                         ghReposExtracted++
-                        corpusBuilder.append(desc).append(". ")
+                        if (desc.isNotBlank()) corpusBuilder.append(desc).append(". ")
                     }
                 } catch (_: Exception) {}
             }
@@ -345,48 +358,8 @@ class OsintScraperService(
             }
             httpProbes.add(ghEventsResp.toProbe(ghEventsExtracted))
 
-            // If user has no direct GitHub repos, search GitHub repositories matching the handle/query
-            if (repos.isEmpty()) {
-                val ghSearchResp = executeHttpGet(
-                    url = "https://api.github.com/search/repositories?q=$encodedHandle&sort=stars&per_page=5",
-                    platform = "GITHUB_SEARCH_API",
-                    acceptHeader = "application/vnd.github+json"
-                )
-                var ghSearchExtracted = 0
-                if (ghSearchResp.body != null) {
-                    try {
-                        val items = JSONObject(ghSearchResp.body).optJSONArray("items") ?: JSONArray()
-                        for (i in 0 until items.length()) {
-                            val r = items.getJSONObject(i)
-                            val name = r.optString("name", "repo-$i")
-                            val fullName = r.optString("full_name", name)
-                            val desc = r.optString("description", "").takeIf { it.isNotBlank() && it != "null" }
-                                ?: "Matched GitHub repository for $cleanHandle"
-                            val lang = r.optString("language", "").takeIf { it.isNotBlank() && it != "null" } ?: "Python"
-                            val stars = r.optInt("stargazers_count", 0)
-                            val forks = r.optInt("forks_count", 0)
-                            val htmlUrl = r.optString("html_url", "https://github.com/$fullName")
-                            val updatedAt = r.optString("updated_at", currentIsoUtc())
-                            repos.add(GithubRepoItem(name, fullName, desc, lang, stars, forks, htmlUrl, updatedAt))
-                            scrapedArtifacts.add(
-                                ForensicMathEngine.createTimestampedArtifact(
-                                    id = "art-gh-search-$i-${System.nanoTime()}",
-                                    platform = "GITHUB_SEARCH",
-                                    timestampIso = updatedAt,
-                                    verbatimText = "[$fullName]: $desc",
-                                    contextLabel = fullName
-                                )
-                            )
-                            ghSearchExtracted++
-                            corpusBuilder.append(desc).append(". ")
-                        }
-                        if (repos.isNotEmpty() && "GITHUB_API" !in liveSources) {
-                            liveSources.add("GITHUB_SEARCH")
-                        }
-                    } catch (_: Exception) {}
-                }
-                httpProbes.add(ghSearchResp.toProbe(ghSearchExtracted))
-            }
+            // NOTE: the old keyword-search fallback (search/repositories?q=<handle>) was removed. It attributed
+            // other people's repositories to the subject. A user with no public repos now simply has none.
         }
 
         // 2. Live Hugging Face Hub API Scrape (Author models + Semantic search models with timestamps)
@@ -402,30 +375,13 @@ class OsintScraperService(
             }
             httpProbes.add(hfAuthorResp.toProbe(hfAssets.size - beforeAuthorCount))
 
-            if (hfAssets.size < 3) {
-                val searchTopic = if (repos.isNotEmpty()) {
-                    repos.first().language.ifBlank { cleanHandle }
-                } else {
-                    cleanHandle
-                }
-                val hfSearchResp = executeHttpGet(
-                    url = "https://huggingface.co/api/models?search=${URLEncoder.encode(searchTopic, "UTF-8")}&sort=downloads&direction=-1&limit=4",
-                    platform = "HF_HUB_SEARCH"
-                )
-                val beforeSearchCount = hfAssets.size
-                if (hfSearchResp.body != null) {
-                    parseHuggingFaceModels(hfSearchResp.body, hfAssets, scrapedArtifacts, corpusBuilder)
-                    if (hfAssets.size > beforeSearchCount && "HF_AUTHOR_API" !in liveSources) {
-                        liveSources.add("HF_HUB_SEARCH")
-                    }
-                }
-                httpProbes.add(hfSearchResp.toProbe(hfAssets.size - beforeSearchCount))
-            }
+            // NOTE: the old popularity-search fallback (models?search=<language>) was removed. It attached
+            // unrelated top-downloaded models to the subject.
         }
 
         // 3. Direct Target URL / Walled-Garden HTML, JSON-LD, __NEXT_DATA__ Hydration & <time> Scraper
         if (shouldScrapeDirectUrl) {
-            val targetUrl = if (isExplicitUrl) trimmed else "https://github.com/$encodedHandle"
+            val targetUrl = trimmed
             val detectedPlatform = ForensicMathEngine.detectWalledGarden(targetUrl)?.name?.uppercase(Locale.US)
                 ?: "DIRECT_URL_DOM"
             val htmlResp = executeHttpGet(
@@ -435,15 +391,18 @@ class OsintScraperService(
             )
             var domExtractedCount = 0
             if (!htmlResp.body.isNullOrBlank()) {
+                val fetchTimestamp = currentIsoUtc()
                 val parsedWebArtifacts = parseHtmlAndHydrationArtifacts(
                     url = targetUrl,
                     html = htmlResp.body,
                     platformLabel = detectedPlatform,
-                    fallbackTimestampIso = currentIsoUtc()
+                    fallbackTimestampIso = fetchTimestamp
                 )
                 parsedWebArtifacts.forEach { webArt ->
                     scrapedArtifacts.add(0, webArt)
-                    utcHours.add(webArt.utcHour)
+                    // Artifacts without a real published timestamp carry the fetch time; exclude them
+                    // from the activity histogram so "now" is not mistaken for the author's activity.
+                    if (webArt.timestampIso != fetchTimestamp) utcHours.add(webArt.utcHour)
                     corpusBuilder.append(webArt.verbatimText).append(". ")
                     domExtractedCount++
                 }
@@ -454,71 +413,10 @@ class OsintScraperService(
             httpProbes.add(htmlResp.toProbe(domExtractedCount))
         }
 
-        // Ensure rich deterministic fallbacks if offline or rate-limited
-        if (repos.isEmpty()) {
-            val fallbackTs = "2026-11-08T10:15:00Z"
-            repos.add(
-                GithubRepoItem(
-                    name = "${cleanHandle.lowercase(Locale.US)}-core-pipeline",
-                    fullName = "$cleanHandle/${cleanHandle.lowercase(Locale.US)}-core-pipeline",
-                    description = "Distributed OSINT telemetry parser and graph ingestion module for $displayHandle",
-                    language = "Python",
-                    stars = 340,
-                    forks = 52,
-                    url = "https://github.com/$cleanHandle",
-                    updatedAtIso = fallbackTs
-                )
-            )
-        }
-
-        if (hfAssets.isEmpty()) {
-            hfAssets.add(
-                HuggingFaceAsset(
-                    id = "Minej/bert-base-personality",
-                    kind = "MODEL",
-                    pipelineTag = "text-classification",
-                    downloads = 48200,
-                    likes = 195,
-                    summary = "Big Five (OCEAN) psycholinguistic personality inference model.",
-                    lastModifiedIso = "2026-11-04T14:29:31Z",
-                    tags = listOf("psychometrics", "ocean", "bert")
-                )
-            )
-        }
-
-        if (scrapedArtifacts.isEmpty()) {
-            val wgName = ForensicMathEngine.detectWalledGarden(trimmed)?.name?.uppercase(Locale.US) ?: "OSINT_FEED"
-            scrapedArtifacts.add(
-                ForensicMathEngine.createTimestampedArtifact(
-                    id = "art-fallback-1-${System.nanoTime()}",
-                    platform = wgName,
-                    timestampIso = currentIsoUtc(),
-                    verbatimText = "We must ensure the consensus architecture enforces deterministic validation across all nodes before deployment.",
-                    contextLabel = trimmed.take(40)
-                )
-            )
-            scrapedArtifacts.add(
-                ForensicMathEngine.createTimestampedArtifact(
-                    id = "art-fallback-2-${System.nanoTime()}",
-                    platform = "${wgName}_COMMENTS",
-                    timestampIso = "2026-11-07T21:18:40Z",
-                    verbatimText = "Skip the surface-level summary; show me the exact latency benchmarks and raw AST hydration trace.",
-                    contextLabel = "$displayHandle // Thread #19"
-                )
-            )
-        }
-
+        // No fabricated fallbacks: if nothing was collected, the profile says so (dataProvenance = NO_DATA,
+        // corpusWordCount = 0) instead of inventing repos, models, quotes or activity hours.
         val combinedCorpus = corpusBuilder.toString().trim().ifBlank {
             scrapedArtifacts.joinToString(" ") { it.verbatimText }
-        }
-
-        if (utcHours.size < 6) {
-            scrapedArtifacts.forEach { utcHours.add(it.utcHour) }
-            val hashSeed = ForensicMathEngine.sha256(displayHandle)
-            val shift = (hashSeed.take(2).toIntOrNull(16) ?: 6) % 24
-            for (h in 0 until 12) {
-                utcHours.add((shift + 7 + (h % 12)) % 24)
-            }
         }
 
         val eval = ForensicMathEngine.evaluateCorpus(
@@ -552,13 +450,13 @@ class OsintScraperService(
         val frontStage = when {
             bioText.isNotBlank() -> "[PUBLIC BIO // $displayName]: $bioText"
             sortedArtifacts.isNotEmpty() -> "[${sortedArtifacts.first().platform} @ ${sortedArtifacts.first().timestampIso}]: ${sortedArtifacts.first().verbatimText}"
-            else -> combinedCorpus.take(160)
+            else -> "[NO DATA COLLECTED]: every source returned nothing or failed; see the HTTP probe log."
         }
 
         val backStage = when {
             commitMessages.isNotEmpty() -> "[COMMIT TRACE]: \"${commitMessages.first().take(150)}\""
             sortedArtifacts.size >= 2 -> "[${sortedArtifacts[1].platform} @ ${sortedArtifacts[1].timestampIso}]: \"${sortedArtifacts[1].verbatimText.take(150)}\""
-            else -> "[AST TELEMETRY]: Extracted via $patchBadge — Diurnal rest trough locked at ${chrono.windowLabel}."
+            else -> "[NO SECOND STATEMENT]: fewer than two artifacts collected."
         }
 
         val provHash = ForensicMathEngine.sha256("$displayHandle:$trimmed:${eval.burrowsDelta}:${System.currentTimeMillis()}")
@@ -567,8 +465,12 @@ class OsintScraperService(
             stixId = ForensicMathEngine.generateStixId("identity", displayHandle),
             handle = displayHandle,
             codeId = "#${displayHandle.take(2)}-${provHash.take(4).uppercase(Locale.US)}",
-            alias = "$displayName // ${lingProfile.archetypeTitle.take(26)}",
-            cluster = "Cluster: ${repos.firstOrNull()?.language ?: "Multi-Modal"} + LIWC Psychometrics",
+            alias = if (eval.tokenCount >= DataSufficiency.MIN_WORDS_FOR_TRAITS) {
+                "$displayName // ${lingProfile.archetypeTitle.take(26)}"
+            } else {
+                "$displayName // INSUFFICIENT DATA"
+            },
+            cluster = "Cluster: ${repos.firstOrNull()?.language?.ifBlank { null } ?: "Unknown"} + LIWC heuristics",
             loc = chrono.locationLabel,
             lat = chrono.lat,
             lon = chrono.lon,
@@ -591,8 +493,11 @@ class OsintScraperService(
             linguisticProfile = lingProfile,
             healedPatchId = patchBadge,
             provSha256 = provHash,
-            updatedAt = System.currentTimeMillis()
-        )
+            updatedAt = System.currentTimeMillis(),
+            consentStatus = ConsentStatus.UNVERIFIED,
+            corpusWordCount = eval.tokenCount,
+            dataProvenance = if (liveSources.isNotEmpty()) "LIVE: ${liveSources.joinToString(" + ")}" else "NO_DATA"
+        ).let { ForensicMathEngine.applyConsentGate(it) }
 
         val now = System.currentTimeMillis()
         val triplets = mutableListOf<KnowledgeTripletEntity>()
@@ -625,7 +530,7 @@ class OsintScraperService(
             )
         }
 
-        val sourceLabel = if (liveSources.isNotEmpty()) liveSources.joinToString(" + ") else "AST_HEURISTIC_FALLBACK"
+        val sourceLabel = if (liveSources.isNotEmpty()) liveSources.joinToString(" + ") else "NO_DATA"
         val totalLatencyMs = httpProbes.sumOf { it.latencyMs }
         ScrapeIngestionResult(
             profile = profile,
@@ -840,9 +745,9 @@ class OsintScraperService(
             rawText = combinedCorpus,
             repoCount = activeProfile.githubRepos.size,
             hfCount = activeProfile.huggingFaceAssets.size,
-            followerCount = 350
+            followerCount = 0
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(hours, activeProfile.loc.substringBefore("(").trim())
+        val chrono = ForensicMathEngine.evaluateChronoAndGeo(hours, declaredLocationOf(activeProfile))
         val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
             handle = activeProfile.handle,
             eval = eval,
@@ -875,164 +780,173 @@ class OsintScraperService(
             linguisticProfile = lingProfile,
             actionableInsights = insights,
             provSha256 = newHash,
-            updatedAt = System.currentTimeMillis()
-        )
+            updatedAt = System.currentTimeMillis(),
+            corpusWordCount = eval.tokenCount,
+            dataProvenance = appendProvenance(activeProfile.dataProvenance, "MANUAL")
+        ).let { ForensicMathEngine.applyConsentGate(it) }
     }
 
     /**
-     * Actively scrapes GitHub and Hugging Face Hub for top OSINT, Psychometric Profiling, Stylometry,
-     * and Knowledge Graph tools/models and attaches them to the active profile & Mind Map.
+     * Recomputes every derived score from the artifacts already stored for a subject (no network).
+     * Used when consent status changes: restricted outputs were never stored for UNVERIFIED subjects,
+     * so unlocking them means recomputing from the collected evidence, then re-applying the gate.
+     */
+    suspend fun recomputeFromArtifacts(profile: SubjectProfile): SubjectProfile = withContext(Dispatchers.Default) {
+        val artifacts = profile.scrapedArtifacts
+        val corpus = artifacts.joinToString(" ") { it.verbatimText }
+        val eval = ForensicMathEngine.evaluateCorpus(
+            rawText = corpus,
+            repoCount = profile.githubRepos.size,
+            hfCount = profile.huggingFaceAssets.size,
+            followerCount = 0
+        )
+        val chrono = ForensicMathEngine.evaluateChronoAndGeo(artifacts.map { it.utcHour }, declaredLocationOf(profile))
+        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
+            handle = profile.handle,
+            eval = eval,
+            chrono = chrono,
+            artifactsCount = artifacts.size
+        )
+        val insights = ForensicMathEngine.synthesizeActionableInsights(
+            handle = profile.handle,
+            eval = eval,
+            chrono = chrono,
+            repos = profile.githubRepos,
+            hfAssets = profile.huggingFaceAssets,
+            healedPatchId = profile.healedPatchId,
+            lingProfile = lingProfile
+        )
+        profile.copy(
+            burrowsDelta = eval.burrowsDelta,
+            styloMatch = eval.styloMatchPct,
+            mattrScore = eval.mattr,
+            ocean = eval.ocean,
+            darkTriad = eval.darkTriad,
+            threatMetrics = eval.threatMetrics,
+            zScores = eval.zScores30,
+            hourlyBins = chrono.hourlyBins,
+            troughWindowLabel = chrono.windowLabel,
+            loc = chrono.locationLabel,
+            lat = chrono.lat,
+            lon = chrono.lon,
+            utcOffset = chrono.inferredUtcOffset,
+            linguisticProfile = lingProfile,
+            actionableInsights = insights,
+            corpusWordCount = eval.tokenCount,
+            updatedAt = System.currentTimeMillis()
+        ).let { ForensicMathEngine.applyConsentGate(it) }
+    }
+
+    /** The location the subject publicly declared, if known (never a restricted/inferred label). */
+    private fun declaredLocationOf(profile: SubjectProfile): String? {
+        val raw = profile.loc
+        return when {
+            raw.isBlank() -> null
+            raw.startsWith(ForensicMathEngine.RESTRICTED_LABEL) -> null
+            raw.startsWith("DECLARED: ") -> raw.removePrefix("DECLARED: ").trim()
+            raw.startsWith("UNKNOWN") || raw.startsWith("MERIDIAN") -> null
+            else -> raw.substringBefore("(").substringBefore("//").trim().ifBlank { null }
+        }
+    }
+
+    private fun appendProvenance(existing: String, tag: String): String =
+        if (existing.isBlank()) tag else if (existing.contains(tag)) existing else "$existing + $tag"
+
+    /**
+     * Looks up reference tools on GitHub and Hugging Face and links them in the knowledge graph as
+     * REFERENCE_TOOL nodes. These results are NOT attributed to the subject: they are not added to the
+     * subject's repos, models, artifacts or corpus, and the subject's scores are not recomputed from them.
+     * (The previous version merged strangers' repo descriptions into the subject's text and re-scored
+     * their personality from it.)
      */
     suspend fun harvestGithubAndHuggingFaceEnhancements(
         activeProfile: SubjectProfile
     ): ScrapeIngestionResult = withContext(Dispatchers.IO) {
-        val discoveredRepos = activeProfile.githubRepos.toMutableList()
-        val discoveredHf = activeProfile.huggingFaceAssets.toMutableList()
-        val updatedArtifacts = activeProfile.scrapedArtifacts.toMutableList()
         val httpProbes = mutableListOf<HttpEndpointProbe>()
-        val extraText = StringBuilder(updatedArtifacts.joinToString(" ") { it.verbatimText }).append(" ")
+        val toolRepos = mutableListOf<GithubRepoItem>()
+        val toolModels = mutableListOf<HuggingFaceAsset>()
         val liveHitSources = mutableListOf<String>()
 
-        val ghQuery = URLEncoder.encode("osint OR stylometry OR psychometrics", "UTF-8")
+        val ghQuery = URLEncoder.encode("stylometry OR psycholinguistics OR disinformation", "UTF-8")
         val ghSearchResp = executeHttpGet(
             url = "https://api.github.com/search/repositories?q=$ghQuery&sort=stars&per_page=5",
-            platform = "GITHUB_OSINT_SEARCH",
+            platform = "GITHUB_TOOL_SEARCH",
             acceptHeader = "application/vnd.github+json"
         )
-        var ghUpgradesAdded = 0
         if (ghSearchResp.body != null) {
             try {
                 val items = JSONObject(ghSearchResp.body).optJSONArray("items") ?: JSONArray()
                 for (i in 0 until items.length()) {
                     val r = items.getJSONObject(i)
-                    val name = r.optString("name", "osint-tool-$i")
-                    val fullName = r.optString("full_name", name)
-                    val desc = r.optString("description", "").takeIf { it.isNotBlank() && it != "null" }
-                        ?: "High-starred GitHub OSINT & psychometric analysis module"
-                    val lang = r.optString("language", "").takeIf { it.isNotBlank() && it != "null" } ?: "Python"
-                    val stars = r.optInt("stargazers_count", 0)
-                    val forks = r.optInt("forks_count", 0)
-                    val url = r.optString("html_url", "https://github.com/$fullName")
-                    val updatedAt = r.optString("updated_at", currentIsoUtc())
-                    if (discoveredRepos.none { it.fullName.equals(fullName, ignoreCase = true) }) {
-                        discoveredRepos.add(0, GithubRepoItem(name, fullName, desc, lang, stars, forks, url, updatedAt))
-                        updatedArtifacts.add(
-                            0,
-                            ForensicMathEngine.createTimestampedArtifact(
-                                id = "art-up-gh-$i-${System.nanoTime()}",
-                                platform = "GITHUB_OSINT_HUB",
-                                timestampIso = updatedAt,
-                                verbatimText = "Discovered OSINT/Psychometric Upgrade [$fullName (★$stars)]: $desc",
-                                contextLabel = fullName
-                            )
+                    val fullName = r.optString("full_name", "")
+                    if (fullName.isBlank()) continue
+                    toolRepos.add(
+                        GithubRepoItem(
+                            name = r.optString("name", fullName),
+                            fullName = fullName,
+                            description = r.optString("description", "").takeIf { it != "null" }.orEmpty(),
+                            language = r.optString("language", "").takeIf { it != "null" }.orEmpty(),
+                            stars = r.optInt("stargazers_count", 0),
+                            forks = r.optInt("forks_count", 0),
+                            url = r.optString("html_url", "https://github.com/$fullName"),
+                            updatedAtIso = r.optString("updated_at", currentIsoUtc())
                         )
-                        ghUpgradesAdded++
-                        extraText.append(desc).append(". ")
-                    }
+                    )
                 }
-                liveHitSources.add("GITHUB_OSINT_SEARCH")
+                liveHitSources.add("GITHUB_TOOL_SEARCH")
             } catch (_: Exception) {}
         }
-        httpProbes.add(ghSearchResp.toProbe(ghUpgradesAdded))
+        httpProbes.add(ghSearchResp.toProbe(toolRepos.size))
 
-        val hfQueries = listOf("personality", "psychometric", "deception")
-        for (q in hfQueries) {
-            val hfResp = executeHttpGet(
-                url = "https://huggingface.co/api/models?search=$q&sort=downloads&direction=-1&limit=3",
-                platform = "HF_HUB_UPGRADE ($q)"
-            )
-            val beforeCount = discoveredHf.size
-            if (hfResp.body != null) {
-                parseHuggingFaceModels(hfResp.body, discoveredHf, updatedArtifacts, extraText)
-                if ("HF_MODEL_HUB" !in liveHitSources) liveHitSources.add("HF_MODEL_HUB")
-            }
-            httpProbes.add(hfResp.toProbe(discoveredHf.size - beforeCount))
+        val hfResp = executeHttpGet(
+            url = "https://huggingface.co/api/models?search=propaganda&sort=downloads&direction=-1&limit=5",
+            platform = "HF_TOOL_SEARCH"
+        )
+        if (hfResp.body != null) {
+            // Parse into throwaway artifact/corpus buffers so nothing reaches the subject's corpus.
+            parseHuggingFaceModels(hfResp.body, toolModels, mutableListOf(), StringBuilder())
+            if (toolModels.isNotEmpty()) liveHitSources.add("HF_TOOL_SEARCH")
         }
-
-        val trimmedRepos = discoveredRepos.take(8)
-        val trimmedHf = discoveredHf.take(8)
-        val trimmedArtifacts = updatedArtifacts.sortedByDescending { it.timestampIso }.take(20)
-
-        val eval = ForensicMathEngine.evaluateCorpus(
-            rawText = extraText.toString(),
-            repoCount = trimmedRepos.size,
-            hfCount = trimmedHf.size,
-            followerCount = 500
-        )
-        val chrono = ForensicMathEngine.ChronoGeoEvaluation(
-            hourlyBins = activeProfile.hourlyBins,
-            troughStartUtc = 1,
-            troughEndUtc = 7,
-            inferredUtcOffset = activeProfile.utcOffset,
-            windowLabel = activeProfile.troughWindowLabel,
-            lat = activeProfile.lat,
-            lon = activeProfile.lon,
-            locationLabel = activeProfile.loc
-        )
-        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
-            handle = activeProfile.handle,
-            eval = eval,
-            chrono = chrono,
-            artifactsCount = trimmedArtifacts.size
-        )
-        val newInsights = ForensicMathEngine.synthesizeActionableInsights(
-            handle = activeProfile.handle,
-            eval = eval,
-            chrono = chrono,
-            repos = trimmedRepos,
-            hfAssets = trimmedHf,
-            healedPatchId = "GH+HF_FUSION_V3.5",
-            lingProfile = lingProfile
-        )
-
-        val newHash = ForensicMathEngine.sha256("${activeProfile.handle}:GH_HF_UPGRADE:${System.currentTimeMillis()}")
-        val updatedProfile = activeProfile.copy(
-            githubRepos = trimmedRepos,
-            huggingFaceAssets = trimmedHf,
-            scrapedArtifacts = trimmedArtifacts,
-            linguisticProfile = lingProfile,
-            actionableInsights = newInsights,
-            provSha256 = newHash,
-            updatedAt = System.currentTimeMillis()
-        )
+        httpProbes.add(hfResp.toProbe(toolModels.size))
 
         val now = System.currentTimeMillis()
+        val refHash = ForensicMathEngine.sha256("${activeProfile.handle}:REFERENCE_TOOLS:$now")
         val newTriplets = mutableListOf<KnowledgeTripletEntity>()
-        trimmedRepos.take(2).forEachIndexed { idx, r ->
+        toolRepos.take(3).forEachIndexed { idx, r ->
             newTriplets.add(
                 KnowledgeTripletEntity(
-                    id = "tr-up-gh-$idx-$now",
+                    id = "tr-ref-gh-$idx-$now",
                     subjectHandle = activeProfile.handle,
-                    predicate = "ENHANCED_BY_GH (★${r.stars})",
+                    predicate = "REFERENCE_TOOL (not attributed to subject, ★${r.stars})",
                     objectNode = r.fullName,
                     nodeCategory = NodeCategory.OSINT_TOOL.name,
-                    confidence = 0.97f,
-                    provSha256 = newHash,
+                    confidence = 1.0f,
+                    provSha256 = refHash,
                     timestamp = now - idx * 50
                 )
             )
         }
-        trimmedHf.take(2).forEachIndexed { idx, hf ->
+        toolModels.take(3).forEachIndexed { idx, hf ->
             newTriplets.add(
                 KnowledgeTripletEntity(
-                    id = "tr-up-hf-$idx-$now",
+                    id = "tr-ref-hf-$idx-$now",
                     subjectHandle = activeProfile.handle,
-                    predicate = "FUSED_HF_${hf.kind}",
+                    predicate = "REFERENCE_MODEL (not attributed to subject)",
                     objectNode = hf.id,
                     nodeCategory = NodeCategory.HF_MODEL.name,
-                    confidence = 0.96f,
-                    provSha256 = newHash,
+                    confidence = 1.0f,
+                    provSha256 = refHash,
                     timestamp = now - 200 - idx * 50
                 )
             )
         }
 
-        val srcSummary = if (liveHitSources.isNotEmpty()) liveHitSources.joinToString("+") else "CACHED_HUB_CATALOG"
+        val srcSummary = if (liveHitSources.isNotEmpty()) liveHitSources.joinToString("+") else "NO_DATA"
         ScrapeIngestionResult(
-            profile = updatedProfile,
+            profile = activeProfile,
             triplets = newTriplets,
             httpProbes = httpProbes,
-            telemetrySummary = "HARVESTED GITHUB + HUGGING FACE UPGRADES ($srcSummary) // ${trimmedRepos.size} REPOS, ${trimmedHf.size} HF MODELS, ${trimmedArtifacts.size} LOGS FUSED",
+            telemetrySummary = "REFERENCE TOOL LOOKUP ($srcSummary) // ${toolRepos.size} REPOS, ${toolModels.size} HF MODELS LINKED AS REFERENCES (SUBJECT PROFILE UNCHANGED)",
             liveSourceUsed = srcSummary
         )
     }
@@ -1095,7 +1009,7 @@ class OsintScraperService(
             segments.size == 1 -> segments[0].substringBefore(".")
             else -> raw
         }
-        return candidate.removePrefix("@").substringBefore("?").substringBefore("#").ifBlank { "torvalds" }
+        return candidate.removePrefix("@").substringBefore("?").substringBefore("#").trim()
     }
 
     fun extractCleanTextFromHtml(html: String): String {
