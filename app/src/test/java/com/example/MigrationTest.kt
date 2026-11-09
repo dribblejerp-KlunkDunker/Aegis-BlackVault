@@ -173,6 +173,26 @@ class MigrationTest {
         assertTrue(repository.verifyAuditChain().intact)
     }
 
+    @Test
+    fun `committed schema for the current version matches the compiled database`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AegisDatabase::class.java).allowMainThreadQueries().build()
+        val (version, compiledHash) = db.openHelper.readableDatabase.let { sql ->
+            sql.version to sql.query("SELECT identity_hash FROM room_master_table WHERE id = 42").use { c ->
+                c.moveToFirst(); c.getString(0)
+            }
+        }
+        db.close()
+        val json = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("com.example.data.AegisDatabase/$version.json").bufferedReader().use { it.readText() }
+        val committedHash = org.json.JSONObject(json).getJSONObject("database").getString("identityHash")
+        assertEquals(
+            "app/schemas/com.example.data.AegisDatabase/$version.json is stale; Room's identity hash is $compiledHash",
+            compiledHash,
+            committedHash
+        )
+    }
+
     private companion object {
         const val LEGACY_ID = "subj-legacy"
         const val LEGACY_HANDLE = "legacy_handle"
