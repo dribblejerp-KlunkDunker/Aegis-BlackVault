@@ -166,6 +166,39 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   Central and uploads HTML and SARIF reports.
 - **Governance rows wrap long values** instead of running into the label.
 
+## Phase 3a — collection through declared connectors
+- **Connector contract** (`com.example.connectors`): each source declares its kind, whether it
+  needs opt-in, a per-minute request budget, its endpoints and a terms note. Every artifact is
+  stamped with its connector's run id. The pattern comes from OpenOSINT.
+  - **Passive** connectors read a platform's public API and always run.
+  - **Active** connectors contact the target's own site. They stay off until you switch them on in
+    the Scraper tab; the switch is remembered and written to the audit log.
+- **The connectors:**
+  - `GithubConnector` and `HuggingFaceConnector` (passive) are the previous collection code,
+    restructured.
+  - `DirectUrlConnector` (active):
+    - reads `robots.txt` first, following RFC 9309 (longest match wins, Allow wins ties, `*` and
+      `$` supported, unreachable means disallow);
+    - refuses platforms whose terms prohibit automated collection (TikTok, Instagram, Facebook,
+      Threads, X, LinkedIn, Snapchat, OnlyFans, YouTube, Reddit, Discord), pointing to their
+      own-account data export instead.
+- **Run log.** The Scraper tab lists every connector with its kind, endpoints, budget and the
+  outcome of the last run. The audit entry for a collection records each connector's status.
+- **Removed:**
+  - the walled-garden catalog;
+  - the "FORCE DOM MUTATION" button;
+  - the scripted four-stage "AI auto-heal", which saved invented "patches" claiming to unlock those
+    platforms, and the seeded fake TikTok patch. Existing patch rows stay in the database, and
+    exports still list them;
+  - the quick-select presets that profiled named real people.
+- **Tests:** `ConnectorTest` (11 cases) covers:
+  - the contract for every connector;
+  - robots rules, group selection and fetch failures;
+  - rate limits;
+  - no requests without opt-in;
+  - the robots-then-page order with custody;
+  - robots blocks, platform refusals with zero requests, and passive-only runs for a handle.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only

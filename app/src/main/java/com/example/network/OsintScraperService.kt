@@ -1,13 +1,19 @@
 package com.example.network
 
+import com.example.connectors.CollectionTarget
+import com.example.connectors.ConnectorRateLimiter
+import com.example.connectors.ConnectorRegistry
+import com.example.connectors.ConnectorRunRecord
+import com.example.connectors.ConnectorRunStatus
+import com.example.connectors.ConnectorToolkit
+import com.example.connectors.EvidenceAccumulator
+import com.example.connectors.RobotsTxt
 import com.example.engine.ChronoGeoEngine
 import com.example.engine.ConsentGate
 import com.example.engine.ForensicCommon
 import com.example.engine.PlaybookEngine
 import com.example.engine.StylometryEngine
-import com.example.engine.WalledGardenCatalog
 import com.example.model.*
-import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,12 +43,14 @@ import org.json.JSONObject
 class OsintScraperService(
     customClient: OkHttpClient? = null,
     /** Optional GitHub token (fine-grained, read-only public access is enough). Raises the limit from 60 to 5,000 req/hr. */
-    private val githubToken: String = ""
-) {
+    private val githubToken: String = "",
+    /** Per-connector request budget; one per service instance (the app holds a single instance). */
+    private val rateLimiter: ConnectorRateLimiter = ConnectorRateLimiter()
+) : ConnectorToolkit {
 
     companion object {
         /** Identifies the app honestly. Browser User-Agent spoofing/rotation was removed. */
-        const val USER_AGENT = "AegisBlackvault/3.6 (Android; research workbench)"
+        const val USER_AGENT = "${RobotsTxt.PRODUCT_TOKEN}/3.6 (Android; research workbench)"
 
         /** Hard cap on bytes read from any single response, to avoid OOM on large or hostile pages. */
         const val MAX_BODY_BYTES = 2L * 1024 * 1024
@@ -112,43 +120,22 @@ class OsintScraperService(
         val triplets: List<KnowledgeTripletEntity>,
         val httpProbes: List<HttpEndpointProbe>,
         val telemetrySummary: String,
-        val liveSourceUsed: String
+        val liveSourceUsed: String,
+        /** One record per connector that applied to the input, in run order. */
+        val connectorRuns: List<ConnectorRunRecord> = emptyList()
     )
 
-    fun currentIsoUtc(): String {
+    override fun currentIsoUtc(): String {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         return sdf.format(Date())
     }
 
     /**
-     * Chain of custody: stamps every artifact added since [fromIndex] (up to [toIndex]) with the response
-     * it came from, so each stored statement can be traced to a URL, a fetch time, a status and a hash
-     * of the exact bytes read.
-     */
-    private fun stampCustody(
-        artifacts: MutableList<ScrapedArtifactItem>,
-        fromIndex: Int,
-        resp: RawHttpResponse,
-        runId: String,
-        toIndex: Int = artifacts.size
-    ) {
-        for (i in fromIndex until toIndex) {
-            artifacts[i] = artifacts[i].copy(
-                sourceUrl = resp.url,
-                fetchedAtMillis = resp.fetchedAtMillis,
-                httpStatus = resp.statusCode,
-                rawResponseSha256 = resp.rawSha256,
-                connectorRunId = runId
-            )
-        }
-    }
-
-    /**
      * Executes a real OkHttp GET request and captures HTTP status code, latency in ms,
      * payload size in bytes, and server/date headers.
      */
-    private fun executeHttpGet(url: String, platform: String, acceptHeader: String = "application/json"): RawHttpResponse {
+    override fun executeHttpGet(url: String, platform: String, acceptHeader: String): RawHttpResponse {
         val startMs = System.currentTimeMillis()
         return try {
             val req = Request.Builder()
@@ -207,7 +194,8 @@ class OsintScraperService(
     suspend fun scrapeAndBuildProfile(
         rawTargetInput: String,
         platformMode: ScraperPlatformMode = ScraperPlatformMode.ALL,
-        healedPatchId: String? = null
+        /** Ids of ACTIVE connectors the user has switched on (see [ConnectorRegistry]). */
+        optedInConnectors: Set<String> = emptySet()
     ): ScrapeIngestionResult = withContext(Dispatchers.IO) {
         val trimmed = rawTargetInput.trim()
         val isExplicitUrl = trimmed.startsWith("http://", ignoreCase = true) ||
@@ -218,245 +206,60 @@ class OsintScraperService(
             .take(18)
             .ifBlank { "TARGET_NODE" }
 
-        val corpusBuilder = StringBuilder()
-        val utcHours = mutableListOf<Int>()
-        val scrapedArtifacts = mutableListOf<ScrapedArtifactItem>()
-        val httpProbes = mutableListOf<HttpEndpointProbe>()
-        var declaredLocation: String? = null
-        var bioText = ""
-        var displayName = cleanHandle
-        var followerCount = 0
-        val repos = mutableListOf<GithubRepoItem>()
-        val hfAssets = mutableListOf<HuggingFaceAsset>()
-        val liveSources = mutableListOf<String>()
-        val commitMessages = mutableListOf<String>()
+        val acc = EvidenceAccumulator(initialDisplayName = cleanHandle)
+        val target = CollectionTarget(
+            raw = trimmed,
+            handle = cleanHandle,
+            explicitUrl = trimmed.takeIf { isExplicitUrl },
+            mode = platformMode
+        )
+        val baseRunId = "run-${System.currentTimeMillis()}-${ForensicCommon.sha256(trimmed).take(8)}"
+        val connectorRuns = mutableListOf<ConnectorRunRecord>()
 
-        val encodedHandle = URLEncoder.encode(cleanHandle, "UTF-8")
-        val runId = "run-${System.currentTimeMillis()}-${ForensicCommon.sha256(trimmed).take(8)}"
+        // Each connector that applies runs in turn. Active ones need an explicit opt-in, every one has a
+        // per-minute request budget, and every artifact is stamped with its connector run id.
+        for (connector in ConnectorRegistry.all) {
+            if (!connector.appliesTo(target)) continue
+            val spec = connector.spec
+            val runId = "$baseRunId-${spec.id}"
+            val requestsBefore = acc.requestsMade
+            val (status, detail) = when {
+                spec.requiresOptIn && spec.id !in optedInConnectors ->
+                    ConnectorRunStatus.SKIPPED_NOT_OPTED_IN to "turn it on under Connectors to let it contact the site"
 
-        // A blank handle no longer silently falls back to a default account.
-        val hasHandle = cleanHandle.isNotBlank()
+                !rateLimiter.tryAcquire(spec.id, spec.maxRequestsPerMinute, spec.requestsPerRun) ->
+                    ConnectorRunStatus.SKIPPED_RATE_LIMITED to "more than ${spec.maxRequestsPerMinute} requests a minute; try again shortly"
 
-        val shouldScrapeGithub = hasHandle && (
-            platformMode == ScraperPlatformMode.ALL ||
-                platformMode == ScraperPlatformMode.GITHUB ||
-                trimmed.contains("github.com", ignoreCase = true)
-            )
-
-        val shouldScrapeHf = hasHandle && (
-            platformMode == ScraperPlatformMode.ALL ||
-                platformMode == ScraperPlatformMode.HUGGINGFACE ||
-                trimmed.contains("huggingface.co", ignoreCase = true)
-            )
-
-        // Direct page fetches touch the target's site, so (as in OpenOSINT) they require an explicit
-        // URL or explicit DIRECT_URL mode; handles alone never trigger them.
-        val shouldScrapeDirectUrl = isExplicitUrl
-
-        // 1. Live GitHub User + Repos + Public Events Scrape (with ISO-8601 Timestamps)
-        if (shouldScrapeGithub) {
-            val ghUserResp = executeHttpGet(
-                url = "https://api.github.com/users/$encodedHandle",
-                platform = "GITHUB_USER_API",
-                acceptHeader = "application/vnd.github+json"
-            )
-            var ghUserExtracted = 0
-            val ghUserMark = scrapedArtifacts.size
-            if (ghUserResp.body != null) {
-                try {
-                    val u = JSONObject(ghUserResp.body)
-                    displayName = u.optString("name", cleanHandle).takeIf { it.isNotBlank() && it != "null" } ?: cleanHandle
-                    declaredLocation = u.optString("location", "").takeIf { it.isNotBlank() && it != "null" }
-                    bioText = u.optString("bio", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
-                    followerCount = u.optInt("followers", 0)
-                    val updatedAt = u.optString("updated_at", currentIsoUtc()).takeIf { it.isNotBlank() } ?: currentIsoUtc()
-                    val company = u.optString("company", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
-                    if (bioText.isNotBlank()) {
-                        scrapedArtifacts.add(
-                            StylometryEngine.createTimestampedArtifact(
-                                id = "art-gh-bio-${System.nanoTime()}",
-                                platform = "GITHUB_BIO",
-                                timestampIso = updatedAt,
-                                verbatimText = "$bioText ${if (company.isNotBlank()) "($company)" else ""}".trim(),
-                                contextLabel = "github.com/$cleanHandle"
-                            )
-                        )
-                        ghUserExtracted++
-                    }
-                    corpusBuilder.append(bioText).append(". ").append(company).append(". ")
-                    liveSources.add("GITHUB_API")
-                } catch (_: Exception) {}
-            }
-            stampCustody(scrapedArtifacts, ghUserMark, ghUserResp, runId)
-            httpProbes.add(ghUserResp.toProbe(ghUserExtracted))
-
-            val ghReposResp = executeHttpGet(
-                url = "https://api.github.com/users/$encodedHandle/repos?sort=updated&per_page=8",
-                platform = "GITHUB_REPOS_API",
-                acceptHeader = "application/vnd.github+json"
-            )
-            var ghReposExtracted = 0
-            val ghReposMark = scrapedArtifacts.size
-            if (ghReposResp.body != null) {
-                try {
-                    val arr = JSONArray(ghReposResp.body)
-                    for (i in 0 until arr.length()) {
-                        val r = arr.getJSONObject(i)
-                        val name = r.optString("name", "repo-$i")
-                        val fullName = r.optString("full_name", "$cleanHandle/$name")
-                        val desc = r.optString("description", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
-                        val lang = r.optString("language", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
-                        val stars = r.optInt("stargazers_count", 0)
-                        val forks = r.optInt("forks_count", 0)
-                        val htmlUrl = r.optString("html_url", "https://github.com/$fullName")
-                        val pushedAt = r.optString("pushed_at", r.optString("updated_at", currentIsoUtc()))
-                        val topicsArr = r.optJSONArray("topics") ?: JSONArray()
-                        val topics = mutableListOf<String>()
-                        for (t in 0 until topicsArr.length()) topics.add(topicsArr.optString(t))
-
-                        if (pushedAt.length >= 13 && pushedAt[10] == 'T') {
-                            pushedAt.substring(11, 13).toIntOrNull()?.let { utcHours.add(it) }
-                        }
-
-                        repos.add(GithubRepoItem(name, fullName, desc, lang, stars, forks, htmlUrl, pushedAt, topics))
-                        scrapedArtifacts.add(
-                            StylometryEngine.createTimestampedArtifact(
-                                id = "art-gh-repo-$i-${System.nanoTime()}",
-                                platform = "GITHUB_REPO",
-                                timestampIso = pushedAt,
-                                verbatimText = "[$fullName ($lang, ★$stars)]: $desc",
-                                contextLabel = fullName
-                            )
-                        )
-                        ghReposExtracted++
-                        if (desc.isNotBlank()) corpusBuilder.append(desc).append(". ")
-                    }
-                } catch (_: Exception) {}
-            }
-            stampCustody(scrapedArtifacts, ghReposMark, ghReposResp, runId)
-            httpProbes.add(ghReposResp.toProbe(ghReposExtracted))
-
-            // Extract commit messages, issue comments, PR descriptions & UTC timestamps from GitHub public events
-            val ghEventsResp = executeHttpGet(
-                url = "https://api.github.com/users/$encodedHandle/events/public?per_page=30",
-                platform = "GITHUB_EVENTS_API",
-                acceptHeader = "application/vnd.github+json"
-            )
-            var ghEventsExtracted = 0
-            val ghEventsMark = scrapedArtifacts.size
-            if (ghEventsResp.body != null) {
-                try {
-                    val events = JSONArray(ghEventsResp.body)
-                    for (i in 0 until events.length()) {
-                        val ev = events.getJSONObject(i)
-                        val evType = ev.optString("type", "PushEvent")
-                        val createdAt = ev.optString("created_at", currentIsoUtc())
-                        val repoName = ev.optJSONObject("repo")?.optString("name", cleanHandle) ?: cleanHandle
-                        if (createdAt.length >= 13 && createdAt[10] == 'T') {
-                            createdAt.substring(11, 13).toIntOrNull()?.let { utcHours.add(it) }
-                        }
-                        val payload = ev.optJSONObject("payload")
-
-                        // Commits
-                        val commits = payload?.optJSONArray("commits")
-                        if (commits != null) {
-                            for (c in 0 until commits.length()) {
-                                val msg = commits.getJSONObject(c).optString("message", "").trim()
-                                if (msg.isNotBlank() && commitMessages.size < 12) {
-                                    commitMessages.add(msg)
-                                    corpusBuilder.append(msg).append(". ")
-                                    scrapedArtifacts.add(
-                                        StylometryEngine.createTimestampedArtifact(
-                                            id = "art-commit-$i-$c-${System.nanoTime()}",
-                                            platform = "GITHUB_COMMIT",
-                                            timestampIso = createdAt,
-                                            verbatimText = msg,
-                                            contextLabel = repoName
-                                        )
-                                    )
-                                    ghEventsExtracted++
-                                }
-                            }
-                        }
-
-                        // Issue / PR comments
-                        val commentBody = payload?.optJSONObject("comment")?.optString("body", "")?.trim() ?: ""
-                        if (commentBody.isNotBlank() && scrapedArtifacts.size < 22) {
-                            corpusBuilder.append(commentBody.take(400)).append(". ")
-                            scrapedArtifacts.add(
-                                StylometryEngine.createTimestampedArtifact(
-                                    id = "art-comment-$i-${System.nanoTime()}",
-                                    platform = "GITHUB_${evType.uppercase(Locale.US).take(10)}",
-                                    timestampIso = createdAt,
-                                    verbatimText = commentBody.take(280),
-                                    contextLabel = repoName
-                                )
-                            )
-                            ghEventsExtracted++
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-            stampCustody(scrapedArtifacts, ghEventsMark, ghEventsResp, runId)
-            httpProbes.add(ghEventsResp.toProbe(ghEventsExtracted))
-
-            // NOTE: the old keyword-search fallback (search/repositories?q=<handle>) was removed. It attributed
-            // other people's repositories to the subject. A user with no public repos now simply has none.
-        }
-
-        // 2. Live Hugging Face Hub API Scrape (Author models + Semantic search models with timestamps)
-        if (shouldScrapeHf) {
-            val hfAuthorResp = executeHttpGet(
-                url = "https://huggingface.co/api/models?author=$encodedHandle&limit=5",
-                platform = "HF_AUTHOR_API"
-            )
-            val beforeAuthorCount = hfAssets.size
-            val hfMark = scrapedArtifacts.size
-            if (hfAuthorResp.body != null) {
-                parseHuggingFaceModels(hfAuthorResp.body, hfAssets, scrapedArtifacts, corpusBuilder)
-                if (hfAssets.isNotEmpty()) liveSources.add("HF_AUTHOR_API")
-            }
-            stampCustody(scrapedArtifacts, hfMark, hfAuthorResp, runId)
-            httpProbes.add(hfAuthorResp.toProbe(hfAssets.size - beforeAuthorCount))
-
-            // NOTE: the old popularity-search fallback (models?search=<language>) was removed. It attached
-            // unrelated top-downloaded models to the subject.
-        }
-
-        // 3. Direct Target URL / Walled-Garden HTML, JSON-LD, __NEXT_DATA__ Hydration & <time> Scraper
-        if (shouldScrapeDirectUrl) {
-            val targetUrl = trimmed
-            val detectedPlatform = WalledGardenCatalog.detectWalledGarden(targetUrl)?.name?.uppercase(Locale.US)
-                ?: "DIRECT_URL_DOM"
-            val htmlResp = executeHttpGet(
-                url = targetUrl,
-                platform = detectedPlatform,
-                acceptHeader = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            var domExtractedCount = 0
-            if (!htmlResp.body.isNullOrBlank()) {
-                val fetchTimestamp = currentIsoUtc()
-                val parsedWebArtifacts = parseHtmlAndHydrationArtifacts(
-                    url = targetUrl,
-                    html = htmlResp.body,
-                    platformLabel = detectedPlatform,
-                    fallbackTimestampIso = fetchTimestamp
-                )
-                parsedWebArtifacts.forEach { webArt ->
-                    scrapedArtifacts.add(0, webArt)
-                    // Artifacts without a real published timestamp carry the fetch time; exclude them
-                    // from the activity histogram so "now" is not mistaken for the author's activity.
-                    if (webArt.timestampIso != fetchTimestamp) utcHours.add(webArt.utcHour)
-                    corpusBuilder.append(webArt.verbatimText).append(". ")
-                    domExtractedCount++
-                }
-                if (domExtractedCount > 0) {
-                    liveSources.add("HTML_HYDRATION_PARSER")
+                else -> try {
+                    connector.collect(target, acc, this@OsintScraperService, runId)
+                } catch (e: Exception) {
+                    ConnectorRunStatus.FAILED to "${e.javaClass.simpleName}: ${e.message?.take(120).orEmpty()}"
                 }
             }
-            stampCustody(scrapedArtifacts, 0, htmlResp, runId, toIndex = domExtractedCount)
-            httpProbes.add(htmlResp.toProbe(domExtractedCount))
+            connectorRuns += ConnectorRunRecord(
+                runId = runId,
+                connectorId = spec.id,
+                displayName = spec.displayName,
+                kind = spec.kind,
+                status = status,
+                artifacts = acc.scrapedArtifacts.count { it.connectorRunId == runId },
+                requests = acc.requestsMade - requestsBefore,
+                detail = detail
+            )
         }
+
+        val corpusBuilder = acc.corpusBuilder
+        val utcHours = acc.utcHours
+        val scrapedArtifacts = acc.scrapedArtifacts
+        val httpProbes = acc.httpProbes
+        val declaredLocation = acc.declaredLocation
+        val bioText = acc.bioText
+        val displayName = acc.displayName
+        val followerCount = acc.followerCount
+        val repos = acc.repos
+        val hfAssets = acc.hfAssets
+        val liveSources = acc.liveSources
+        val commitMessages = acc.commitMessages
 
         // No fabricated fallbacks: if nothing was collected, the profile says so (dataProvenance = NO_DATA,
         // corpusWordCount = 0) instead of inventing repos, models, quotes or activity hours.
@@ -471,7 +274,7 @@ class OsintScraperService(
             followerCount = followerCount
         )
         val chrono = ChronoGeoEngine.evaluateChronoAndGeo(utcHours, declaredLocation)
-        val patchBadge = healedPatchId ?: if (liveSources.isNotEmpty()) liveSources.joinToString("+") else "DIRECT_AST_V3.5"
+        val patchBadge = if (liveSources.isNotEmpty()) liveSources.joinToString("+") else "NO_DATA"
 
         val sortedArtifacts = scrapedArtifacts.sortedByDescending { it.timestampIso }.take(20)
 
@@ -586,7 +389,8 @@ class OsintScraperService(
             triplets = triplets,
             httpProbes = httpProbes,
             telemetrySummary = "OKHTTP INGESTED [$displayHandle] VIA $sourceLabel (${httpProbes.size} PROBES, ${totalLatencyMs}ms) // ${sortedArtifacts.size} LOGS, Δ=${eval.burrowsDelta}, ATI=${lingProfile.analyticalThinkingIndex}%",
-            liveSourceUsed = sourceLabel
+            liveSourceUsed = sourceLabel,
+            connectorRuns = connectorRuns
         )
     }
 
@@ -594,11 +398,11 @@ class OsintScraperService(
      * Multi-Strategy HTML / JSON-LD / Hydration (__NEXT_DATA__) / OpenGraph / Semantic <time> Extractor.
      * Parses raw HTML into timestamped ScrapedArtifactItems.
      */
-    fun parseHtmlAndHydrationArtifacts(
+    override fun parseHtmlAndHydrationArtifacts(
         url: String,
         html: String,
-        platformLabel: String = "DIRECT_URL_DOM",
-        fallbackTimestampIso: String = currentIsoUtc()
+        platformLabel: String,
+        fallbackTimestampIso: String
     ): List<ScrapedArtifactItem> {
         val extracted = mutableListOf<ScrapedArtifactItem>()
         val contextHost = url.replace(Regex("^https?://", RegexOption.IGNORE_CASE), "").take(44)
@@ -1004,7 +808,7 @@ class OsintScraperService(
         )
     }
 
-    private fun parseHuggingFaceModels(
+    override fun parseHuggingFaceModels(
         rawJson: String,
         targetList: MutableList<HuggingFaceAsset>,
         artifactsList: MutableList<ScrapedArtifactItem>,
