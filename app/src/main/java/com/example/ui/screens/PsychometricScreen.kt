@@ -52,7 +52,8 @@ fun PsychometricScreen(
     onDeleteSubject: () -> Unit = {},
     onSetRetentionDays: (Int) -> Unit = {},
     onSetAppLock: (Boolean) -> Unit = {},
-    onVerifyAuditChain: () -> Unit = {}
+    onVerifyAuditChain: () -> Unit = {},
+    projectControls: ProjectControls? = null
 ) {
     var activeSubTab by remember { mutableStateOf("PLAYBOOK") }
     val lp = activeSubject.linguisticProfile
@@ -122,7 +123,8 @@ fun PsychometricScreen(
                 onDeleteSubject = onDeleteSubject,
                 onSetRetentionDays = onSetRetentionDays,
                 onSetAppLock = onSetAppLock,
-                onVerifyAuditChain = onVerifyAuditChain
+                onVerifyAuditChain = onVerifyAuditChain,
+                projectControls = projectControls
             )
 
             "PLAYBOOK" -> {

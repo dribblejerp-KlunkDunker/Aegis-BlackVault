@@ -123,6 +123,32 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   inside the unlocked app can still read the data. Robolectric tests run unencrypted because the
   native library cannot load on the JVM.
 
+## Phase 2d — projects as the isolation boundary (schema v6)
+- **Every subject belongs to exactly one project, and so do its artifacts, linguistic profile,
+  mind-map edges and knowledge triplets.** The idea comes from GHOST; no code was copied.
+  - Every list in the app shows only the active project.
+  - Erasing a subject only removes triplets in its own project, even when another project holds the
+    same handle.
+- **A subject never changes project.** Saving a profile whose id belongs to another project is
+  refused (`CrossProjectWriteException`).
+- **Cross-project links are opt-in.** Mind maps link to subjects in another project only when both
+  projects allow it.
+- **Retention is per project.** The old global setting moves into the default project once.
+- **Erase project** removes everything in it and nothing else. The default project cannot be erased.
+- **Audit entries** name projects only by a pseudonymous reference, never by name.
+- **UI:**
+  - an always-visible project bar with a switcher and "+ New";
+  - a project card in Governance with cross-link and erase controls;
+  - an empty-project screen with a collect field, instead of the endless spinner shown when there
+    are no subjects.
+- **Migration 5 → 6** moves all existing data into the default project.
+- **Tests:**
+  - `ProjectIsolationTest` covers scoping, same handle in two projects, refusal to move, the
+    two-sided opt-in, per-project retention, and erasing a project without leaking its name to the
+    audit log;
+  - migration tests extended to v6;
+  - screenshots of the project bar, dialog and empty state.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only

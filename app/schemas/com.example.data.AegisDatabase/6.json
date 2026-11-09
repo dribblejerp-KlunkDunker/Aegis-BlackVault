@@ -1,0 +1,1161 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 6,
+    "identityHash": "75160d0bcfe5c489c0110b1604ada1dc",
+    "entities": [
+      {
+        "tableName": "subject_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `stixId` TEXT NOT NULL, `handle` TEXT NOT NULL, `codeId` TEXT NOT NULL, `alias` TEXT NOT NULL, `cluster` TEXT NOT NULL, `loc` TEXT NOT NULL, `lat` REAL NOT NULL, `lon` REAL NOT NULL, `utcOffset` INTEGER NOT NULL, `troughWindowLabel` TEXT NOT NULL, `burrowsDelta` REAL NOT NULL, `styloMatch` REAL NOT NULL, `mattrScore` REAL NOT NULL, `oceanJson` TEXT NOT NULL, `darkTriadJson` TEXT NOT NULL, `threatMetricsJson` TEXT NOT NULL, `zScoresJson` TEXT NOT NULL, `hourlyBinsJson` TEXT NOT NULL, `frontStageQuote` TEXT NOT NULL, `backStageQuote` TEXT NOT NULL, `githubReposJson` TEXT NOT NULL, `huggingFaceModelsJson` TEXT NOT NULL, `insightsJson` TEXT NOT NULL, `artifactsJson` TEXT NOT NULL, `linguisticProfileJson` TEXT NOT NULL, `healedPatchId` TEXT NOT NULL, `provSha256` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, `consentStatus` TEXT NOT NULL, `corpusWordCount` INTEGER NOT NULL, `dataProvenance` TEXT NOT NULL, `consentMethod` TEXT NOT NULL, `consentRecordedAt` INTEGER NOT NULL, `consentExpiresAt` INTEGER NOT NULL, `projectId` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stixId",
+            "columnName": "stixId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "handle",
+            "columnName": "handle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "codeId",
+            "columnName": "codeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "alias",
+            "columnName": "alias",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cluster",
+            "columnName": "cluster",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "loc",
+            "columnName": "loc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lon",
+            "columnName": "lon",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "utcOffset",
+            "columnName": "utcOffset",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "troughWindowLabel",
+            "columnName": "troughWindowLabel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "burrowsDelta",
+            "columnName": "burrowsDelta",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "styloMatch",
+            "columnName": "styloMatch",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mattrScore",
+            "columnName": "mattrScore",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "oceanJson",
+            "columnName": "oceanJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "darkTriadJson",
+            "columnName": "darkTriadJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "threatMetricsJson",
+            "columnName": "threatMetricsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zScoresJson",
+            "columnName": "zScoresJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hourlyBinsJson",
+            "columnName": "hourlyBinsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frontStageQuote",
+            "columnName": "frontStageQuote",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backStageQuote",
+            "columnName": "backStageQuote",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "githubReposJson",
+            "columnName": "githubReposJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "huggingFaceModelsJson",
+            "columnName": "huggingFaceModelsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "insightsJson",
+            "columnName": "insightsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "artifactsJson",
+            "columnName": "artifactsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linguisticProfileJson",
+            "columnName": "linguisticProfileJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "healedPatchId",
+            "columnName": "healedPatchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provSha256",
+            "columnName": "provSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "consentStatus",
+            "columnName": "consentStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "corpusWordCount",
+            "columnName": "corpusWordCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dataProvenance",
+            "columnName": "dataProvenance",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "consentMethod",
+            "columnName": "consentMethod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "consentRecordedAt",
+            "columnName": "consentRecordedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "consentExpiresAt",
+            "columnName": "consentExpiresAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_subject_profiles_handle",
+            "unique": false,
+            "columnNames": [
+              "handle"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subject_profiles_handle` ON `${TABLE_NAME}` (`handle`)"
+          },
+          {
+            "name": "index_subject_profiles_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subject_profiles_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          },
+          {
+            "name": "index_subject_profiles_projectId",
+            "unique": false,
+            "columnNames": [
+              "projectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subject_profiles_projectId` ON `${TABLE_NAME}` (`projectId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "raw_social_media_entities",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entityId` TEXT NOT NULL, `subjectId` TEXT NOT NULL, `subjectHandle` TEXT NOT NULL, `platform` TEXT NOT NULL, `sourceUri` TEXT NOT NULL, `postedTimestampIso` TEXT NOT NULL, `utcHour` INTEGER NOT NULL, `rawPayloadText` TEXT NOT NULL, `rawDomSignature` TEXT NOT NULL, `lexicalMarkersCsv` TEXT NOT NULL, `sentimentScore` INTEGER NOT NULL, `provSha256` TEXT NOT NULL, `ingestedAtMillis` INTEGER NOT NULL, `sourceUrl` TEXT NOT NULL, `fetchedAtMillis` INTEGER NOT NULL, `httpStatus` INTEGER NOT NULL, `rawResponseSha256` TEXT NOT NULL, `connectorRunId` TEXT NOT NULL, PRIMARY KEY(`entityId`), FOREIGN KEY(`subjectId`) REFERENCES `subject_profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "entityId",
+            "columnName": "entityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectId",
+            "columnName": "subjectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectHandle",
+            "columnName": "subjectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platform",
+            "columnName": "platform",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUri",
+            "columnName": "sourceUri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "postedTimestampIso",
+            "columnName": "postedTimestampIso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "utcHour",
+            "columnName": "utcHour",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawPayloadText",
+            "columnName": "rawPayloadText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawDomSignature",
+            "columnName": "rawDomSignature",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lexicalMarkersCsv",
+            "columnName": "lexicalMarkersCsv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentimentScore",
+            "columnName": "sentimentScore",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provSha256",
+            "columnName": "provSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ingestedAtMillis",
+            "columnName": "ingestedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceUrl",
+            "columnName": "sourceUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAtMillis",
+            "columnName": "fetchedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "httpStatus",
+            "columnName": "httpStatus",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawResponseSha256",
+            "columnName": "rawResponseSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectorRunId",
+            "columnName": "connectorRunId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "entityId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_raw_social_media_entities_subjectId",
+            "unique": false,
+            "columnNames": [
+              "subjectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_raw_social_media_entities_subjectId` ON `${TABLE_NAME}` (`subjectId`)"
+          },
+          {
+            "name": "index_raw_social_media_entities_subjectHandle",
+            "unique": false,
+            "columnNames": [
+              "subjectHandle"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_raw_social_media_entities_subjectHandle` ON `${TABLE_NAME}` (`subjectHandle`)"
+          },
+          {
+            "name": "index_raw_social_media_entities_platform",
+            "unique": false,
+            "columnNames": [
+              "platform"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_raw_social_media_entities_platform` ON `${TABLE_NAME}` (`platform`)"
+          },
+          {
+            "name": "index_raw_social_media_entities_postedTimestampIso",
+            "unique": false,
+            "columnNames": [
+              "postedTimestampIso"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_raw_social_media_entities_postedTimestampIso` ON `${TABLE_NAME}` (`postedTimestampIso`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "subject_profiles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "subjectId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "linguistic_personality_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`profileId` TEXT NOT NULL, `subjectId` TEXT NOT NULL, `subjectHandle` TEXT NOT NULL, `archetypeTitle` TEXT NOT NULL, `archetypeSummary` TEXT NOT NULL, `analyticalThinkingIndex` INTEGER NOT NULL, `cloutDominanceIndex` INTEGER NOT NULL, `authenticityIndex` INTEGER NOT NULL, `emotionalToneIndex` INTEGER NOT NULL, `cognitiveComplexityIndex` INTEGER NOT NULL, `iPronounRatePct` REAL NOT NULL, `wePronounRatePct` REAL NOT NULL, `youPronounRatePct` REAL NOT NULL, `certaintyMarkerPct` REAL NOT NULL, `hedgingMarkerPct` REAL NOT NULL, `burrowsDelta` REAL NOT NULL, `styloMatchPct` REAL NOT NULL, `mattrScore` REAL NOT NULL, `openness` INTEGER NOT NULL, `conscientiousness` INTEGER NOT NULL, `extraversion` INTEGER NOT NULL, `agreeableness` INTEGER NOT NULL, `neuroticism` INTEGER NOT NULL, `machiavellianism` INTEGER NOT NULL, `narcissism` INTEGER NOT NULL, `psychopathy` INTEGER NOT NULL, `whatMakesThemTickJson` TEXT NOT NULL, `egoCravingsJson` TEXT NOT NULL, `fearTriggersJson` TEXT NOT NULL, `howToTalkJson` TEXT NOT NULL, `exactPhrasesToUseJson` TEXT NOT NULL, `phrasesToAvoidJson` TEXT NOT NULL, `persuasionHooksJson` TEXT NOT NULL, `cognitiveBiasesJson` TEXT NOT NULL, `negotiationTacticsJson` TEXT NOT NULL, `evaluatedArtifactCount` INTEGER NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`profileId`), FOREIGN KEY(`subjectId`) REFERENCES `subject_profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "profileId",
+            "columnName": "profileId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectId",
+            "columnName": "subjectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectHandle",
+            "columnName": "subjectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archetypeTitle",
+            "columnName": "archetypeTitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archetypeSummary",
+            "columnName": "archetypeSummary",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analyticalThinkingIndex",
+            "columnName": "analyticalThinkingIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cloutDominanceIndex",
+            "columnName": "cloutDominanceIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authenticityIndex",
+            "columnName": "authenticityIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "emotionalToneIndex",
+            "columnName": "emotionalToneIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cognitiveComplexityIndex",
+            "columnName": "cognitiveComplexityIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "iPronounRatePct",
+            "columnName": "iPronounRatePct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wePronounRatePct",
+            "columnName": "wePronounRatePct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "youPronounRatePct",
+            "columnName": "youPronounRatePct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "certaintyMarkerPct",
+            "columnName": "certaintyMarkerPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hedgingMarkerPct",
+            "columnName": "hedgingMarkerPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "burrowsDelta",
+            "columnName": "burrowsDelta",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "styloMatchPct",
+            "columnName": "styloMatchPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mattrScore",
+            "columnName": "mattrScore",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "openness",
+            "columnName": "openness",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conscientiousness",
+            "columnName": "conscientiousness",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "extraversion",
+            "columnName": "extraversion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "agreeableness",
+            "columnName": "agreeableness",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "neuroticism",
+            "columnName": "neuroticism",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "machiavellianism",
+            "columnName": "machiavellianism",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "narcissism",
+            "columnName": "narcissism",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "psychopathy",
+            "columnName": "psychopathy",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "whatMakesThemTickJson",
+            "columnName": "whatMakesThemTickJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "egoCravingsJson",
+            "columnName": "egoCravingsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fearTriggersJson",
+            "columnName": "fearTriggersJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "howToTalkJson",
+            "columnName": "howToTalkJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exactPhrasesToUseJson",
+            "columnName": "exactPhrasesToUseJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phrasesToAvoidJson",
+            "columnName": "phrasesToAvoidJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "persuasionHooksJson",
+            "columnName": "persuasionHooksJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cognitiveBiasesJson",
+            "columnName": "cognitiveBiasesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "negotiationTacticsJson",
+            "columnName": "negotiationTacticsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evaluatedArtifactCount",
+            "columnName": "evaluatedArtifactCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "profileId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_linguistic_personality_profiles_subjectId",
+            "unique": true,
+            "columnNames": [
+              "subjectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_linguistic_personality_profiles_subjectId` ON `${TABLE_NAME}` (`subjectId`)"
+          },
+          {
+            "name": "index_linguistic_personality_profiles_subjectHandle",
+            "unique": false,
+            "columnNames": [
+              "subjectHandle"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_linguistic_personality_profiles_subjectHandle` ON `${TABLE_NAME}` (`subjectHandle`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "subject_profiles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "subjectId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "mind_map_hierarchy_edges",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`hierarchyId` TEXT NOT NULL, `rootSubjectId` TEXT NOT NULL, `parentNodeId` TEXT NOT NULL, `childNodeId` TEXT NOT NULL, `childLabel` TEXT NOT NULL, `childSubtitle` TEXT NOT NULL, `nodeCategory` TEXT NOT NULL, `hierarchyDepth` INTEGER NOT NULL, `relationshipPredicate` TEXT NOT NULL, `confidenceWeight` REAL NOT NULL, `nodeWeight` REAL NOT NULL, `x3d` REAL NOT NULL, `y3d` REAL NOT NULL, `z3d` REAL NOT NULL, `umapX` REAL NOT NULL, `umapY` REAL NOT NULL, `umapZ` REAL NOT NULL, `nodeDetails` TEXT NOT NULL, `linkedSubjectId` TEXT, `provSha256` TEXT NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`hierarchyId`), FOREIGN KEY(`rootSubjectId`) REFERENCES `subject_profiles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "hierarchyId",
+            "columnName": "hierarchyId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rootSubjectId",
+            "columnName": "rootSubjectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentNodeId",
+            "columnName": "parentNodeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "childNodeId",
+            "columnName": "childNodeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "childLabel",
+            "columnName": "childLabel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "childSubtitle",
+            "columnName": "childSubtitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeCategory",
+            "columnName": "nodeCategory",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hierarchyDepth",
+            "columnName": "hierarchyDepth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relationshipPredicate",
+            "columnName": "relationshipPredicate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidenceWeight",
+            "columnName": "confidenceWeight",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeWeight",
+            "columnName": "nodeWeight",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "x3d",
+            "columnName": "x3d",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "y3d",
+            "columnName": "y3d",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "z3d",
+            "columnName": "z3d",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "umapX",
+            "columnName": "umapX",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "umapY",
+            "columnName": "umapY",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "umapZ",
+            "columnName": "umapZ",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeDetails",
+            "columnName": "nodeDetails",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linkedSubjectId",
+            "columnName": "linkedSubjectId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "provSha256",
+            "columnName": "provSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "hierarchyId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mind_map_hierarchy_edges_rootSubjectId",
+            "unique": false,
+            "columnNames": [
+              "rootSubjectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mind_map_hierarchy_edges_rootSubjectId` ON `${TABLE_NAME}` (`rootSubjectId`)"
+          },
+          {
+            "name": "index_mind_map_hierarchy_edges_parentNodeId",
+            "unique": false,
+            "columnNames": [
+              "parentNodeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mind_map_hierarchy_edges_parentNodeId` ON `${TABLE_NAME}` (`parentNodeId`)"
+          },
+          {
+            "name": "index_mind_map_hierarchy_edges_childNodeId",
+            "unique": false,
+            "columnNames": [
+              "childNodeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mind_map_hierarchy_edges_childNodeId` ON `${TABLE_NAME}` (`childNodeId`)"
+          },
+          {
+            "name": "index_mind_map_hierarchy_edges_hierarchyDepth",
+            "unique": false,
+            "columnNames": [
+              "hierarchyDepth"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mind_map_hierarchy_edges_hierarchyDepth` ON `${TABLE_NAME}` (`hierarchyDepth`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "subject_profiles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "rootSubjectId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "knowledge_triplets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `subjectHandle` TEXT NOT NULL, `predicate` TEXT NOT NULL, `objectNode` TEXT NOT NULL, `nodeCategory` TEXT NOT NULL, `confidence` REAL NOT NULL, `provSha256` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `projectId` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectHandle",
+            "columnName": "subjectHandle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "predicate",
+            "columnName": "predicate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "objectNode",
+            "columnName": "objectNode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeCategory",
+            "columnName": "nodeCategory",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provSha256",
+            "columnName": "provSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectId",
+            "columnName": "projectId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_knowledge_triplets_projectId",
+            "unique": false,
+            "columnNames": [
+              "projectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_knowledge_triplets_projectId` ON `${TABLE_NAME}` (`projectId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "ast_patches",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`platformKey` TEXT NOT NULL, `patchId` TEXT NOT NULL, `platformName` TEXT NOT NULL, `deprecatedSelector` TEXT NOT NULL, `mutatedDom` TEXT NOT NULL, `healedSelector` TEXT NOT NULL, `strategy` TEXT NOT NULL, `pythonSnippet` TEXT NOT NULL, `confidence` TEXT NOT NULL, `timestamp` TEXT NOT NULL, PRIMARY KEY(`platformKey`))",
+        "fields": [
+          {
+            "fieldPath": "platformKey",
+            "columnName": "platformKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "patchId",
+            "columnName": "patchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformName",
+            "columnName": "platformName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deprecatedSelector",
+            "columnName": "deprecatedSelector",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutatedDom",
+            "columnName": "mutatedDom",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "healedSelector",
+            "columnName": "healedSelector",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strategy",
+            "columnName": "strategy",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pythonSnippet",
+            "columnName": "pythonSnippet",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "platformKey"
+          ]
+        }
+      },
+      {
+        "tableName": "audit_log",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMillis` INTEGER NOT NULL, `action` TEXT NOT NULL, `subjectRef` TEXT NOT NULL, `detail` TEXT NOT NULL, `prevHash` TEXT NOT NULL, `entryHash` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "seq",
+            "columnName": "seq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectRef",
+            "columnName": "subjectRef",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "prevHash",
+            "columnName": "prevHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entryHash",
+            "columnName": "entryHash",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "seq"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_audit_log_timestampMillis",
+            "unique": false,
+            "columnNames": [
+              "timestampMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_audit_log_timestampMillis` ON `${TABLE_NAME}` (`timestampMillis`)"
+          },
+          {
+            "name": "index_audit_log_subjectRef",
+            "unique": false,
+            "columnNames": [
+              "subjectRef"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_audit_log_subjectRef` ON `${TABLE_NAME}` (`subjectRef`)"
+          }
+        ]
+      },
+      {
+        "tableName": "projects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `retentionDays` INTEGER NOT NULL, `allowCrossProjectLinks` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retentionDays",
+            "columnName": "retentionDays",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "allowCrossProjectLinks",
+            "columnName": "allowCrossProjectLinks",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '75160d0bcfe5c489c0110b1604ada1dc')"
+    ]
+  }
+}

@@ -40,6 +40,9 @@ import com.example.security.AppLock
 import com.example.ui.AegisViewModel
 import com.example.ui.components.InteractiveMindMapSurface
 import com.example.ui.screens.CommandDeckScreen
+import com.example.ui.screens.EmptyProjectState
+import com.example.ui.screens.ProjectBar
+import com.example.ui.screens.ProjectControls
 import com.example.ui.screens.InsightsAndExportScreen
 import com.example.ui.screens.PsychometricScreen
 import com.example.ui.screens.ScraperBridgeScreen
@@ -179,6 +182,14 @@ fun AegisBlackvaultApp(
     }
 
     val activeSubject = uiState.activeSubject
+    val projectControls = ProjectControls(
+        projects = uiState.projects,
+        activeProjectId = uiState.activeProjectId,
+        onSwitch = viewModel::switchProject,
+        onCreate = viewModel::createProject,
+        onSetCrossLinks = viewModel::setCrossProjectLinks,
+        onDeleteProject = { viewModel.deleteActiveProject(context) }
+    )
     val comparisonSubject = uiState.comparisonSubject
 
     BoxWithConstraints(
@@ -250,6 +261,7 @@ fun AegisBlackvaultApp(
                         },
                         onExportZip = { viewModel.exportAndShareBundle(context) }
                     )
+                    ProjectBar(controls = projectControls, subjectCount = uiState.profiles.size)
                     if (isExpanded || showChromebookSplitDock) {
                         ChromebookWorkstationStatusBar(
                             isChromeOsHardware = isChromeOsHardware,
@@ -301,7 +313,16 @@ fun AegisBlackvaultApp(
                 }
             }
         ) { innerPadding ->
-            if (activeSubject == null || comparisonSubject == null) {
+            if (uiState.profilesLoaded && uiState.profiles.isEmpty()) {
+                EmptyProjectState(
+                    projectName = uiState.activeProject?.name ?: "This project",
+                    scraperUri = uiState.scraperUri,
+                    isScraping = uiState.isScraping,
+                    onUriChange = viewModel::updateScraperUri,
+                    onCollect = { viewModel.executeScrapeJob() },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            } else if (activeSubject == null || comparisonSubject == null) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -407,7 +428,8 @@ fun AegisBlackvaultApp(
                                 onDeleteSubject = { viewModel.deleteActiveSubject(context) },
                                 onSetRetentionDays = viewModel::setRetentionDays,
                                 onSetAppLock = { enabled -> viewModel.setAppLockEnabled(context, enabled) },
-                                onVerifyAuditChain = viewModel::refreshAuditChain
+                                onVerifyAuditChain = viewModel::refreshAuditChain,
+                                projectControls = projectControls
                             )
 
                             3 -> ScraperBridgeScreen(
