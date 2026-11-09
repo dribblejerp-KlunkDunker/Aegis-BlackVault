@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performScrollToNode
@@ -95,6 +96,15 @@ class ConsentGateScreenshotTest {
         scrollPlaybookTo(hasText("WHAT MAKES", substring = true))
         composeTestRule.onNodeWithTag("restricted_notice").assertDoesNotExist()
         composeTestRule.onRoot().captureRoboImage("$out/consent_2_self_unlocked.png")
+    }
+
+    @Test
+    fun consent_record_dialog() {
+        setUpScreen()
+        composeTestRule.onNodeWithTag("consent_CONSENTED").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("consent_record_confirm").assertExists()
+        composeTestRule.onNode(isDialog()).captureRoboImage("$out/consent_3_record_dialog.png")
     }
 
     @Test

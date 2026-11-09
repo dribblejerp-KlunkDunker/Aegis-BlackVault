@@ -73,7 +73,11 @@ class OsintScraperService(
         val latencyMs: Long,
         val payloadBytes: Int,
         val serverHeader: String,
-        val timestampHeader: String
+        val timestampHeader: String,
+        /** When the request was sent (epoch millis). */
+        val fetchedAtMillis: Long = 0L,
+        /** SHA-256 of the response body as read (empty when nothing was read). */
+        val rawSha256: String = ""
     ) {
         fun toProbe(extractedItemsCount: Int): HttpEndpointProbe {
             val badge = when {
@@ -110,6 +114,29 @@ class OsintScraperService(
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         return sdf.format(Date())
+    }
+
+    /**
+     * Chain of custody: stamps every artifact added since [fromIndex] (up to [toIndex]) with the response
+     * it came from, so each stored statement can be traced to a URL, a fetch time, a status and a hash
+     * of the exact bytes read.
+     */
+    private fun stampCustody(
+        artifacts: MutableList<ScrapedArtifactItem>,
+        fromIndex: Int,
+        resp: RawHttpResponse,
+        runId: String,
+        toIndex: Int = artifacts.size
+    ) {
+        for (i in fromIndex until toIndex) {
+            artifacts[i] = artifacts[i].copy(
+                sourceUrl = resp.url,
+                fetchedAtMillis = resp.fetchedAtMillis,
+                httpStatus = resp.statusCode,
+                rawResponseSha256 = resp.rawSha256,
+                connectorRunId = runId
+            )
+        }
     }
 
     /**
@@ -150,7 +177,9 @@ class OsintScraperService(
                     latencyMs = elapsed,
                     payloadBytes = bytes,
                     serverHeader = server,
-                    timestampHeader = dateHdr
+                    timestampHeader = dateHdr,
+                    fetchedAtMillis = startMs,
+                    rawSha256 = rawBody?.let { ForensicMathEngine.sha256(it) }.orEmpty()
                 )
             }
         } catch (e: Exception) {
@@ -163,7 +192,8 @@ class OsintScraperService(
                 latencyMs = elapsed,
                 payloadBytes = 0,
                 serverHeader = "NETWORK_ERROR: ${e.javaClass.simpleName}: ${e.message?.take(120).orEmpty()}",
-                timestampHeader = currentIsoUtc()
+                timestampHeader = currentIsoUtc(),
+                fetchedAtMillis = startMs
             )
         }
     }
@@ -201,6 +231,7 @@ class OsintScraperService(
         val commitMessages = mutableListOf<String>()
 
         val encodedHandle = URLEncoder.encode(cleanHandle, "UTF-8")
+        val runId = "run-${System.currentTimeMillis()}-${ForensicMathEngine.sha256(trimmed).take(8)}"
 
         // A blank handle no longer silently falls back to a default account.
         val hasHandle = cleanHandle.isNotBlank()
@@ -225,6 +256,7 @@ class OsintScraperService(
                 acceptHeader = "application/vnd.github+json"
             )
             var ghUserExtracted = 0
+            val ghUserMark = scrapedArtifacts.size
             if (ghUserResp.body != null) {
                 try {
                     val u = JSONObject(ghUserResp.body)
@@ -250,6 +282,7 @@ class OsintScraperService(
                     liveSources.add("GITHUB_API")
                 } catch (_: Exception) {}
             }
+            stampCustody(scrapedArtifacts, ghUserMark, ghUserResp, runId)
             httpProbes.add(ghUserResp.toProbe(ghUserExtracted))
 
             val ghReposResp = executeHttpGet(
@@ -258,6 +291,7 @@ class OsintScraperService(
                 acceptHeader = "application/vnd.github+json"
             )
             var ghReposExtracted = 0
+            val ghReposMark = scrapedArtifacts.size
             if (ghReposResp.body != null) {
                 try {
                     val arr = JSONArray(ghReposResp.body)
@@ -294,6 +328,7 @@ class OsintScraperService(
                     }
                 } catch (_: Exception) {}
             }
+            stampCustody(scrapedArtifacts, ghReposMark, ghReposResp, runId)
             httpProbes.add(ghReposResp.toProbe(ghReposExtracted))
 
             // Extract commit messages, issue comments, PR descriptions & UTC timestamps from GitHub public events
@@ -303,6 +338,7 @@ class OsintScraperService(
                 acceptHeader = "application/vnd.github+json"
             )
             var ghEventsExtracted = 0
+            val ghEventsMark = scrapedArtifacts.size
             if (ghEventsResp.body != null) {
                 try {
                     val events = JSONArray(ghEventsResp.body)
@@ -356,6 +392,7 @@ class OsintScraperService(
                     }
                 } catch (_: Exception) {}
             }
+            stampCustody(scrapedArtifacts, ghEventsMark, ghEventsResp, runId)
             httpProbes.add(ghEventsResp.toProbe(ghEventsExtracted))
 
             // NOTE: the old keyword-search fallback (search/repositories?q=<handle>) was removed. It attributed
@@ -369,10 +406,12 @@ class OsintScraperService(
                 platform = "HF_AUTHOR_API"
             )
             val beforeAuthorCount = hfAssets.size
+            val hfMark = scrapedArtifacts.size
             if (hfAuthorResp.body != null) {
                 parseHuggingFaceModels(hfAuthorResp.body, hfAssets, scrapedArtifacts, corpusBuilder)
                 if (hfAssets.isNotEmpty()) liveSources.add("HF_AUTHOR_API")
             }
+            stampCustody(scrapedArtifacts, hfMark, hfAuthorResp, runId)
             httpProbes.add(hfAuthorResp.toProbe(hfAssets.size - beforeAuthorCount))
 
             // NOTE: the old popularity-search fallback (models?search=<language>) was removed. It attached
@@ -410,6 +449,7 @@ class OsintScraperService(
                     liveSources.add("HTML_HYDRATION_PARSER")
                 }
             }
+            stampCustody(scrapedArtifacts, 0, htmlResp, runId, toIndex = domExtractedCount)
             httpProbes.add(htmlResp.toProbe(domExtractedCount))
         }
 
@@ -739,7 +779,7 @@ class OsintScraperService(
         )
         val updatedArtifacts = listOf(newArtifact) + activeProfile.scrapedArtifacts
         val combinedCorpus = updatedArtifacts.joinToString(" ") { it.verbatimText }
-        val hours = updatedArtifacts.map { it.utcHour }
+        val hours = updatedArtifacts.filter { it.hasKnownHour }.map { it.utcHour }
 
         val eval = ForensicMathEngine.evaluateCorpus(
             rawText = combinedCorpus,
@@ -800,7 +840,10 @@ class OsintScraperService(
             hfCount = profile.huggingFaceAssets.size,
             followerCount = 0
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(artifacts.map { it.utcHour }, declaredLocationOf(profile))
+        val chrono = ForensicMathEngine.evaluateChronoAndGeo(
+            artifacts.filter { it.hasKnownHour }.map { it.utcHour },
+            declaredLocationOf(profile)
+        )
         val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
             handle = profile.handle,
             eval = eval,

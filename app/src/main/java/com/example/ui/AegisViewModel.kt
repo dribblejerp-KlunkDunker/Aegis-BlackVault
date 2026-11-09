@@ -17,6 +17,7 @@ import com.example.engine.ForensicMathEngine
 import com.example.model.*
 import com.example.network.MultiAiAndDataPortabilityService
 import com.example.network.OsintScraperService
+import com.example.security.AppLock
 import com.example.security.SecureKeyVault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -58,6 +59,12 @@ data class AegisUiState(
     val inAppApiKeys: Map<AiProviderEngine, String> = emptyMap(),
     val aiDirectivePrompt: String = "",
     val githubTokenConfigured: Boolean = false,
+    // Governance (Phase 2)
+    val auditEntries: List<AuditLogEntity> = emptyList(),
+    val auditChain: AuditChainStatus? = null,
+    val retentionDays: Int = 0,
+    val appLockEnabled: Boolean = false,
+    val appLockAvailable: Boolean = false,
     val aiSynthesisState: AiSynthesisState = AiSynthesisState.Idle,
     val selectedExportFormat: DataExportFormat = DataExportFormat.AGENT_HANDOFF,
     val telemetryLogs: List<TelemetryLog> = listOf(
@@ -92,6 +99,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         get() = OsintScraperService(githubToken = keyVault.get(SecureKeyVault.GITHUB_TOKEN))
     private val aiAndPortabilityService = MultiAiAndDataPortabilityService()
     private val prefs = application.getSharedPreferences("aegis_ai_model_vault", Context.MODE_PRIVATE)
+    private val settings = application.getSharedPreferences("aegis_settings", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(AegisUiState())
     val uiState: StateFlow<AegisUiState> = _uiState.asStateFlow()
@@ -120,8 +128,26 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
+        _uiState.update {
+            it.copy(
+                retentionDays = settings.getInt(KEY_RETENTION_DAYS, 0),
+                appLockEnabled = AppLock.isEnabled(application),
+                appLockAvailable = AppLock.isAvailable(application)
+            )
+        }
+
         viewModelScope.launch {
             repository.ensureSeedData()
+            // Retention runs once per launch; then the chain is verified so the UI shows its state.
+            val purged = repository.purgeExpired(_uiState.value.retentionDays)
+            if (purged > 0) appendLog("RETENTION", "PURGED $purged SUBJECT(S) PAST THE ${_uiState.value.retentionDays}-DAY RETENTION PERIOD")
+            refreshAuditChain()
+        }
+
+        viewModelScope.launch {
+            repository.recentAuditFlow.collect { entries ->
+                _uiState.update { it.copy(auditEntries = entries) }
+            }
         }
 
         viewModelScope.launch {
@@ -332,24 +358,112 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
      * the new status is SELF or CONSENTED; switching back to UNVERIFIED strips them again on save.
      * Demo personas are fixed and cannot be changed.
      */
-    fun setSubjectConsent(status: ConsentStatus) {
+    /**
+     * Records consent for the active subject. SELF implies [ConsentMethod.SELF_DECLARED]; CONSENTED needs
+     * a method (written or verbal) and may carry an expiry. UNVERIFIED clears the record. Every change is
+     * written to the hash-chained audit log and recomputes scores from stored artifacts.
+     */
+    fun setSubjectConsent(
+        status: ConsentStatus,
+        method: ConsentMethod? = null,
+        expiryDays: Int = 0
+    ) {
         val active = _uiState.value.activeSubject ?: return
         if (active.consentStatus == ConsentStatus.DEMO || status == ConsentStatus.DEMO) return
-        if (active.consentStatus == status) return
+        val effectiveMethod = when (status) {
+            ConsentStatus.SELF -> ConsentMethod.SELF_DECLARED
+            ConsentStatus.CONSENTED -> method ?: return
+            else -> null
+        }
+        if (active.consentStatus == status && active.consentMethod == (effectiveMethod?.name ?: "") && expiryDays == 0) return
 
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val expiresAt = if (status.unlocksRestricted && expiryDays > 0) now + expiryDays * 24L * 60 * 60 * 1000 else 0L
             val auditEntry = "CONSENT:${status.name}@${OsintScraperService().currentIsoUtc()}"
             val withConsent = active.copy(
                 consentStatus = status,
+                consentMethod = effectiveMethod?.name.orEmpty(),
+                consentRecordedAt = if (effectiveMethod != null) now else 0L,
+                consentExpiresAt = expiresAt,
                 dataProvenance = if (active.dataProvenance.isBlank()) auditEntry else "${active.dataProvenance} | $auditEntry"
             )
             val updated = scraperService.recomputeFromArtifacts(withConsent)
             val allCurrent = listOf(updated) + _uiState.value.profiles.filter { it.id != updated.id }
             repository.saveProfile(updated, allCurrent, _uiState.value.triplets)
+            repository.audit(
+                AuditAction.CONSENT_CHANGED,
+                updated.id,
+                "${active.consentStatus.name} -> ${status.name}" +
+                    (effectiveMethod?.let { " via ${it.name}" } ?: "") +
+                    (if (expiresAt > 0) ", expires in $expiryDays days" else "")
+            )
             appendLog(
                 "CONSENT",
-                "[${updated.handle}] CONSENT -> ${status.label}. RESTRICTED OUTPUTS ${if (status.unlocksRestricted) "COMPUTED" else "WITHHELD"}. RECORDED IN PROVENANCE TRAIL."
+                "[${updated.handle}] CONSENT -> ${status.label}. RESTRICTED OUTPUTS ${if (updated.restrictedOutputsUnlocked) "COMPUTED" else "WITHHELD"}. AUDITED."
             )
+            refreshAuditChain()
+        }
+    }
+
+    // ========================================================================
+    // GOVERNANCE (Phase 2): erasure, retention, app lock, audit chain
+    // ========================================================================
+
+    /** Permanently erases the active subject and any cached exports of it. */
+    fun deleteActiveSubject(context: Context) {
+        val subject = _uiState.value.activeSubject ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val safeHandle = subject.handle.lowercase(Locale.US).replace(Regex("[^a-z0-9_-]"), "_").take(40)
+                File(context.cacheDir, "exports").listFiles()?.filter { it.name.contains(safeHandle) }?.forEach { it.delete() }
+            }
+            val removed = repository.deleteSubject(subject.id, subject.handle, reason = "user request")
+            appendLog("ERASURE", if (removed) "SUBJECT ERASED: profile, artifacts, graph edges, triplets, cached exports" else "NOTHING TO ERASE")
+            _uiState.update { state ->
+                val next = state.profiles.firstOrNull { it.id != subject.id }?.id ?: state.selectedSubjectId
+                state.copy(selectedSubjectId = next)
+            }
+            refreshAuditChain()
+        }
+    }
+
+    /** 0 = keep indefinitely; otherwise subjects not updated within this many days are erased. */
+    fun setRetentionDays(days: Int) {
+        settings.edit { putInt(KEY_RETENTION_DAYS, days) }
+        _uiState.update { it.copy(retentionDays = days) }
+        viewModelScope.launch {
+            repository.audit(AuditAction.SETTINGS_CHANGED, null, if (days > 0) "Retention set to $days days" else "Retention disabled")
+            val purged = repository.purgeExpired(days)
+            if (purged > 0) appendLog("RETENTION", "PURGED $purged SUBJECT(S)")
+            refreshAuditChain()
+        }
+    }
+
+    fun setAppLockEnabled(context: Context, enabled: Boolean) {
+        val ok = AppLock.setEnabled(context, enabled)
+        _uiState.update { it.copy(appLockEnabled = ok && enabled, appLockAvailable = AppLock.isAvailable(context)) }
+        if (!ok) {
+            appendLog("APP_LOCK", "CANNOT ENABLE: set a screen lock or biometric on this device first")
+            return
+        }
+        viewModelScope.launch {
+            repository.audit(AuditAction.SETTINGS_CHANGED, null, if (enabled) "App lock enabled" else "App lock disabled")
+            refreshAuditChain()
+        }
+    }
+
+    fun refreshAuditChain() {
+        viewModelScope.launch {
+            val status = repository.verifyAuditChain()
+            _uiState.update { it.copy(auditChain = status) }
+        }
+    }
+
+    private fun auditAsync(action: AuditAction, subjectId: String?, detail: String) {
+        viewModelScope.launch {
+            repository.audit(action, subjectId, detail)
+            refreshAuditChain()
         }
     }
 
@@ -374,6 +488,11 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(bridgeStatus = "${provider.label} [$selectedModel] // SYNTHESIZING...")
             }
             appendLog("AI_SYNTH", "DISPATCHING DOSSIER [${subject.handle}] TO ${provider.label} ($selectedModel)...")
+            repository.audit(
+                AuditAction.AI_REQUEST,
+                subject.id,
+                "Dossier sent to ${provider.name} ($selectedModel); consent=${subject.consentStatus.name}; restricted=${if (subject.restrictedOutputsUnlocked) "included" else "withheld"}"
+            )
 
             aiAndPortabilityService.streamAiDossierAnalysis(
                 provider = provider,
@@ -471,6 +590,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         appendLog("EXPORT_CLIP", "COPIED ${format.label} (${payload.length} BYTES) TO SYSTEM CLIPBOARD.")
+        auditAsync(AuditAction.EXPORT, subject.id, "${format.name} copied to clipboard (${payload.length} chars); consent=${subject.consentStatus.name}")
     }
 
     fun writeExportToDocumentUri(
@@ -498,6 +618,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 appendLog("SAF_EXPORT", "WROTE ${format.label} FOR [${subject.handle}] TO SAF DOCUMENT URI.")
+                auditAsync(AuditAction.EXPORT, subject.id, "${format.name} saved to device storage; consent=${subject.consentStatus.name}")
             } catch (e: Exception) {
                 appendLog("EXPORT_ERR", "SAF file export failed: ${e.message}")
             }
@@ -556,6 +677,12 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             appendLog("DATA_IMPORT", importRes.summaryMessage)
+            repository.audit(
+                AuditAction.IMPORT,
+                updated.id,
+                "${importRes.formatDetected}: ${importRes.importedStatementsCount} statement(s) imported${if (useGeminiStructuredParser) " (parsed by Gemini)" else ""}"
+            )
+            refreshAuditChain()
         }
     }
 
@@ -631,6 +758,12 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
             val allCurrent = listOf(result.profile) + _uiState.value.profiles.filter { it.id != result.profile.id }
             repository.saveProfile(result.profile, allCurrent, result.triplets)
+            repository.audit(
+                AuditAction.SCRAPE,
+                result.profile.id,
+                "Collected via ${result.liveSourceUsed}: ${result.profile.scrapedArtifacts.size} artifacts, ${result.profile.corpusWordCount} words, ${result.httpProbes.size} requests"
+            )
+            refreshAuditChain()
 
             _uiState.update {
                 it.copy(
@@ -813,6 +946,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(exportBannerMessage = "Ready to share ${format.label} for [${subject.handle}] (consent: ${subject.consentStatus.label}).")
                 }
                 appendLog("EXPORT", "SHARING ${format.label} FOR [${subject.handle}] // PROVENANCE: ${subject.dataProvenance.ifBlank { "UNKNOWN" }}")
+                repository.audit(AuditAction.EXPORT, subject.id, "${format.name} shared via share sheet; consent=${subject.consentStatus.name}")
+                refreshAuditChain()
                 context.startActivity(Intent.createChooser(shareIntent, "Share Aegis export (${format.label})"))
             } catch (e: Exception) {
                 appendLog("EXPORT_ERR", "Export failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -830,4 +965,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 putBoolean("android.content.extra.IS_SENSITIVE", true)
             }
         }
+
+    private companion object {
+        const val KEY_RETENTION_DAYS = "retention_days"
+    }
 }
