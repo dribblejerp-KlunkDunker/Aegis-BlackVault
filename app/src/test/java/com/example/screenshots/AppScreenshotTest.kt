@@ -53,7 +53,11 @@ class AppScreenshotTest {
         composeTestRule.mainClock.autoAdvance = false
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition()) {
-            check(System.currentTimeMillis() < deadline) { "Timed out waiting for the seeded dossiers to load" }
+            if (System.currentTimeMillis() >= deadline) {
+                // Keep a picture of what was on screen, to make a timeout diagnosable from CI artifacts.
+                runCatching { composeTestRule.onRoot().captureRoboImage("$out/TIMEOUT_${System.nanoTime()}.png") }
+                error("Timed out waiting for the seeded dossiers to load")
+            }
             composeTestRule.mainClock.advanceTimeBy(100)
             ShadowLooper.idleMainLooper()
             Thread.sleep(25)
@@ -67,7 +71,19 @@ class AppScreenshotTest {
         }
     }
 
-    private fun waitForSeedData() = pumpUntil {
+    /**
+     * The Room singleton outlives each test, so a project created by an earlier test can still be
+     * active; every test starts from the default project, where the demo personas live.
+     */
+    private fun waitForSeedData() {
+        composeTestRule.runOnUiThread {
+            androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.ui.AegisViewModel::class.java]
+                .switchProject(com.example.model.ProjectEntity.DEFAULT_ID)
+        }
+        waitForDemoPersonas()
+    }
+
+    private fun waitForDemoPersonas() = pumpUntil {
         composeTestRule.onAllNodesWithText("NULL_ROUTER", substring = true).fetchSemanticsNodes().isNotEmpty()
     }
 
