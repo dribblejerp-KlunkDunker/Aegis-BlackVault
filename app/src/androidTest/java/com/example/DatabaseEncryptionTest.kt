@@ -2,7 +2,6 @@ package com.example
 
 import android.content.Context
 import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.data.AegisDatabase
@@ -19,9 +18,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import java.io.File
 import java.security.SecureRandom
 
@@ -31,9 +30,6 @@ import java.security.SecureRandom
  */
 @RunWith(AndroidJUnit4::class)
 class DatabaseEncryptionTest {
-
-    @get:Rule
-    val helper = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), AegisDatabase::class.java)
 
     private val context: Context = InstrumentationRegistry.getInstrumentation().targetContext
     private val names = listOf("enc-fresh.db", "enc-convert.db", "enc-v3.db", "enc-interrupted.db")
@@ -55,6 +51,39 @@ class DatabaseEncryptionTest {
             .allowMainThreadQueries()
             .build()
 
+    /** Prepares [name] and fails with the real conversion error instead of a bare null. */
+    private fun prepareOrFail(name: String): ByteArray =
+        DatabaseEncryption.prepare(context, name) ?: throw AssertionError(
+            "conversion failed (${DatabaseEncryption.status}): " +
+                DatabaseEncryption.lastConversionError?.stackTraceToString()
+        )
+
+    /**
+     * Builds a plaintext database exactly as a v3 install left it, from the committed schema
+     * (app/schemas/.../3.json, packaged as androidTest assets).
+     */
+    private fun createV3Plaintext(name: String) {
+        val json = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("com.example.data.AegisDatabase/3.json").bufferedReader().use { it.readText() }
+        val database = JSONObject(json).getJSONObject("database")
+        val file = context.getDatabasePath(name).also { it.parentFile?.mkdirs() }
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            val entities = database.getJSONArray("entities")
+            for (i in 0 until entities.length()) {
+                val entity = entities.getJSONObject(i)
+                val table = entity.getString("tableName")
+                db.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.optJSONArray("indices") ?: continue
+                for (j in 0 until indices.length()) {
+                    db.execSQL(indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", table))
+                }
+            }
+            val setup = database.getJSONArray("setupQueries")
+            for (i in 0 until setup.length()) db.execSQL(setup.getString(i))
+            db.version = 3
+        }
+    }
+
     private fun assertWrongKeyFails(file: File) {
         val wrong = DatabaseEncryption.rawKeyPassphrase(ByteArray(32).also { SecureRandom().nextBytes(it) })
         assertThrows(Exception::class.java) {
@@ -67,7 +96,7 @@ class DatabaseEncryptionTest {
     @Test
     fun freshDatabaseIsEncryptedOnDisk() = runTest {
         val name = "enc-fresh.db"
-        val passphrase = DatabaseEncryption.prepare(context, name)!!
+        val passphrase = prepareOrFail(name)
         assertEquals(DatabaseEncryption.Status.ENCRYPTED, DatabaseEncryption.status)
 
         open(name, passphrase).let { db ->
@@ -100,7 +129,7 @@ class DatabaseEncryptionTest {
         val file = context.getDatabasePath(name)
         assertTrue(DatabaseEncryption.isPlaintextSqlite(file))
 
-        val passphrase = DatabaseEncryption.prepare(context, name)!!
+        val passphrase = prepareOrFail(name)
         assertEquals(DatabaseEncryption.Status.ENCRYPTED, DatabaseEncryption.status)
         assertFalse(DatabaseEncryption.isPlaintextSqlite(file))
         assertFalse(File(file.path + ".encrypting").exists())
@@ -127,13 +156,16 @@ class DatabaseEncryptionTest {
     @Test
     fun v3PlaintextInstallIsEncryptedThenMigratedToCurrentSchema() = runTest {
         val name = "enc-v3.db"
-        helper.createDatabase(name, 3).use { db ->
+        createV3Plaintext(name)
+        android.database.sqlite.SQLiteDatabase.openDatabase(
+            context.getDatabasePath(name).path, null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
+        ).use { db ->
             db.execSQL(
                 "INSERT INTO knowledge_triplets (id, subjectHandle, predicate, objectNode, nodeCategory, confidence, provSha256, timestamp) " +
                     "VALUES ('t-legacy', 'legacy_handle', 'USES', 'kotlin', 'SKILL', 0.9, '', 1)"
             )
         }
-        val passphrase = DatabaseEncryption.prepare(context, name)!!
+        val passphrase = prepareOrFail(name)
         assertFalse(DatabaseEncryption.isPlaintextSqlite(context.getDatabasePath(name)))
 
         open(name, passphrase).let { db ->
@@ -157,7 +189,7 @@ class DatabaseEncryptionTest {
         assertTrue(file.renameTo(File(file.path + ".plaintext-old")))
         File(file.path + ".encrypting").writeText("partial")
 
-        val passphrase = DatabaseEncryption.prepare(context, name)!!
+        val passphrase = prepareOrFail(name)
         assertFalse(DatabaseEncryption.isPlaintextSqlite(file))
         assertFalse(File(file.path + ".plaintext-old").exists())
         open(name, passphrase).let { db ->

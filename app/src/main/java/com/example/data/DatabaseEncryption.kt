@@ -43,6 +43,11 @@ object DatabaseEncryption {
     var status: Status = Status.UNKNOWN
         private set
 
+    /** Why the last plaintext-to-encrypted conversion failed, if it did (shown in logs and tests). */
+    @Volatile
+    var lastConversionError: Throwable? = null
+        private set
+
     @Volatile
     private var nativeLoaded = false
 
@@ -109,8 +114,10 @@ object DatabaseEncryption {
         if (isPlaintextSqlite(dbFile)) {
             try {
                 encryptInPlace(dbFile, passphrase)
+                lastConversionError = null
                 Log.i(TAG, "Converted the plaintext database to SQLCipher")
             } catch (e: Exception) {
+                lastConversionError = e
                 Log.e(TAG, "Encrypting the existing database failed; keeping it as is for now", e)
                 File(dbFile.path + ENCRYPTING_SUFFIX).delete()
                 status = Status.PLAINTEXT_PENDING
