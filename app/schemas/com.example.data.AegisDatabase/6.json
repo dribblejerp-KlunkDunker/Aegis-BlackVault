@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 6,
-    "identityHash": "pending-room-export-v6",
+    "identityHash": "75160d0bcfe5c489c0110b1604ada1dc",
     "entities": [
       {
         "tableName": "subject_profiles",
@@ -1155,7 +1155,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'pending-room-export-v6')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '75160d0bcfe5c489c0110b1604ada1dc')"
     ]
   }
 }

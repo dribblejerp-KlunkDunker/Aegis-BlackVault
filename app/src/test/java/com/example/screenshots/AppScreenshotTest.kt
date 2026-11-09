@@ -118,6 +118,10 @@ class AppScreenshotTest {
 
     private fun captureProjectsInner(prefix: String) {
         waitForSeedData()
+        // Text input waits for Compose to go idle, which the Command deck's endless animation prevents;
+        // the Psych tab has none.
+        composeTestRule.onNodeWithTag("nav_tab_psych", useUnmergedTree = true).performClick()
+        settle()
         composeTestRule.onNodeWithTag("project_menu_btn", useUnmergedTree = true).performClick()
         settle()
         // The menu is a popup (its own window), so capture the whole screen rather than one root.
