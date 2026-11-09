@@ -184,7 +184,13 @@ fun EmptyProjectState(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("“$projectName” has no subjects yet", color = PhosphorGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Text(
+                "“$projectName” has no subjects yet",
+                color = PhosphorGreen,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
             Text(
                 "Collect from a public GitHub or Hugging Face account to start. New subjects start as Unverified: " +
                     "restricted outputs stay withheld until you record consent.",

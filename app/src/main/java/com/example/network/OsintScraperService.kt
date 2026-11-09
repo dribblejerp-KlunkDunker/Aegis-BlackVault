@@ -1,7 +1,18 @@
 package com.example.network
 
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ChronoGeoEngine
+import com.example.engine.ConsentGate
+import com.example.engine.ForensicCommon
+import com.example.engine.PlaybookEngine
+import com.example.engine.StylometryEngine
+import com.example.engine.WalledGardenCatalog
 import com.example.model.*
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -9,12 +20,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
-import java.util.concurrent.TimeUnit
 
 /**
  * Live OkHttp Multi-Vector OSINT Scraper Service & Intelligence Combiner:
@@ -143,11 +148,7 @@ class OsintScraperService(
      * Executes a real OkHttp GET request and captures HTTP status code, latency in ms,
      * payload size in bytes, and server/date headers.
      */
-    private fun executeHttpGet(
-        url: String,
-        platform: String,
-        acceptHeader: String = "application/json"
-    ): RawHttpResponse {
+    private fun executeHttpGet(url: String, platform: String, acceptHeader: String = "application/json"): RawHttpResponse {
         val startMs = System.currentTimeMillis()
         return try {
             val req = Request.Builder()
@@ -179,7 +180,7 @@ class OsintScraperService(
                     serverHeader = server,
                     timestampHeader = dateHdr,
                     fetchedAtMillis = startMs,
-                    rawSha256 = rawBody?.let { ForensicMathEngine.sha256(it) }.orEmpty()
+                    rawSha256 = rawBody?.let { ForensicCommon.sha256(it) }.orEmpty()
                 )
             }
         } catch (e: Exception) {
@@ -231,18 +232,22 @@ class OsintScraperService(
         val commitMessages = mutableListOf<String>()
 
         val encodedHandle = URLEncoder.encode(cleanHandle, "UTF-8")
-        val runId = "run-${System.currentTimeMillis()}-${ForensicMathEngine.sha256(trimmed).take(8)}"
+        val runId = "run-${System.currentTimeMillis()}-${ForensicCommon.sha256(trimmed).take(8)}"
 
         // A blank handle no longer silently falls back to a default account.
         val hasHandle = cleanHandle.isNotBlank()
 
-        val shouldScrapeGithub = hasHandle && (platformMode == ScraperPlatformMode.ALL ||
-            platformMode == ScraperPlatformMode.GITHUB ||
-            trimmed.contains("github.com", ignoreCase = true))
+        val shouldScrapeGithub = hasHandle && (
+            platformMode == ScraperPlatformMode.ALL ||
+                platformMode == ScraperPlatformMode.GITHUB ||
+                trimmed.contains("github.com", ignoreCase = true)
+            )
 
-        val shouldScrapeHf = hasHandle && (platformMode == ScraperPlatformMode.ALL ||
-            platformMode == ScraperPlatformMode.HUGGINGFACE ||
-            trimmed.contains("huggingface.co", ignoreCase = true))
+        val shouldScrapeHf = hasHandle && (
+            platformMode == ScraperPlatformMode.ALL ||
+                platformMode == ScraperPlatformMode.HUGGINGFACE ||
+                trimmed.contains("huggingface.co", ignoreCase = true)
+            )
 
         // Direct page fetches touch the target's site, so (as in OpenOSINT) they require an explicit
         // URL or explicit DIRECT_URL mode; handles alone never trigger them.
@@ -268,7 +273,7 @@ class OsintScraperService(
                     val company = u.optString("company", "").takeIf { it.isNotBlank() && it != "null" } ?: ""
                     if (bioText.isNotBlank()) {
                         scrapedArtifacts.add(
-                            ForensicMathEngine.createTimestampedArtifact(
+                            StylometryEngine.createTimestampedArtifact(
                                 id = "art-gh-bio-${System.nanoTime()}",
                                 platform = "GITHUB_BIO",
                                 timestampIso = updatedAt,
@@ -315,7 +320,7 @@ class OsintScraperService(
 
                         repos.add(GithubRepoItem(name, fullName, desc, lang, stars, forks, htmlUrl, pushedAt, topics))
                         scrapedArtifacts.add(
-                            ForensicMathEngine.createTimestampedArtifact(
+                            StylometryEngine.createTimestampedArtifact(
                                 id = "art-gh-repo-$i-${System.nanoTime()}",
                                 platform = "GITHUB_REPO",
                                 timestampIso = pushedAt,
@@ -361,7 +366,7 @@ class OsintScraperService(
                                     commitMessages.add(msg)
                                     corpusBuilder.append(msg).append(". ")
                                     scrapedArtifacts.add(
-                                        ForensicMathEngine.createTimestampedArtifact(
+                                        StylometryEngine.createTimestampedArtifact(
                                             id = "art-commit-$i-$c-${System.nanoTime()}",
                                             platform = "GITHUB_COMMIT",
                                             timestampIso = createdAt,
@@ -379,7 +384,7 @@ class OsintScraperService(
                         if (commentBody.isNotBlank() && scrapedArtifacts.size < 22) {
                             corpusBuilder.append(commentBody.take(400)).append(". ")
                             scrapedArtifacts.add(
-                                ForensicMathEngine.createTimestampedArtifact(
+                                StylometryEngine.createTimestampedArtifact(
                                     id = "art-comment-$i-${System.nanoTime()}",
                                     platform = "GITHUB_${evType.uppercase(Locale.US).take(10)}",
                                     timestampIso = createdAt,
@@ -421,7 +426,7 @@ class OsintScraperService(
         // 3. Direct Target URL / Walled-Garden HTML, JSON-LD, __NEXT_DATA__ Hydration & <time> Scraper
         if (shouldScrapeDirectUrl) {
             val targetUrl = trimmed
-            val detectedPlatform = ForensicMathEngine.detectWalledGarden(targetUrl)?.name?.uppercase(Locale.US)
+            val detectedPlatform = WalledGardenCatalog.detectWalledGarden(targetUrl)?.name?.uppercase(Locale.US)
                 ?: "DIRECT_URL_DOM"
             val htmlResp = executeHttpGet(
                 url = targetUrl,
@@ -459,25 +464,25 @@ class OsintScraperService(
             scrapedArtifacts.joinToString(" ") { it.verbatimText }
         }
 
-        val eval = ForensicMathEngine.evaluateCorpus(
+        val eval = StylometryEngine.evaluateCorpus(
             rawText = combinedCorpus,
             repoCount = repos.size,
             hfCount = hfAssets.size,
             followerCount = followerCount
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(utcHours, declaredLocation)
+        val chrono = ChronoGeoEngine.evaluateChronoAndGeo(utcHours, declaredLocation)
         val patchBadge = healedPatchId ?: if (liveSources.isNotEmpty()) liveSources.joinToString("+") else "DIRECT_AST_V3.5"
 
         val sortedArtifacts = scrapedArtifacts.sortedByDescending { it.timestampIso }.take(20)
 
-        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
+        val lingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
             handle = displayHandle,
             eval = eval,
             chrono = chrono,
             artifactsCount = sortedArtifacts.size
         )
 
-        val insights = ForensicMathEngine.synthesizeActionableInsights(
+        val insights = PlaybookEngine.synthesizeActionableInsights(
             handle = displayHandle,
             eval = eval,
             chrono = chrono,
@@ -495,14 +500,18 @@ class OsintScraperService(
 
         val backStage = when {
             commitMessages.isNotEmpty() -> "[COMMIT TRACE]: \"${commitMessages.first().take(150)}\""
-            sortedArtifacts.size >= 2 -> "[${sortedArtifacts[1].platform} @ ${sortedArtifacts[1].timestampIso}]: \"${sortedArtifacts[1].verbatimText.take(150)}\""
+
+            sortedArtifacts.size >= 2 -> "[${sortedArtifacts[1].platform} @ ${sortedArtifacts[1].timestampIso}]: \"${sortedArtifacts[1].verbatimText.take(
+                150
+            )}\""
+
             else -> "[NO SECOND STATEMENT]: fewer than two artifacts collected."
         }
 
-        val provHash = ForensicMathEngine.sha256("$displayHandle:$trimmed:${eval.burrowsDelta}:${System.currentTimeMillis()}")
+        val provHash = ForensicCommon.sha256("$displayHandle:$trimmed:${eval.burrowsDelta}:${System.currentTimeMillis()}")
         val profile = SubjectProfile(
             id = "subj-${provHash.take(8)}",
-            stixId = ForensicMathEngine.generateStixId("identity", displayHandle),
+            stixId = ForensicCommon.generateStixId("identity", displayHandle),
             handle = displayHandle,
             codeId = "#${displayHandle.take(2)}-${provHash.take(4).uppercase(Locale.US)}",
             alias = if (eval.tokenCount >= DataSufficiency.MIN_WORDS_FOR_TRAITS) {
@@ -537,7 +546,7 @@ class OsintScraperService(
             consentStatus = ConsentStatus.UNVERIFIED,
             corpusWordCount = eval.tokenCount,
             dataProvenance = if (liveSources.isNotEmpty()) "LIVE: ${liveSources.joinToString(" + ")}" else "NO_DATA"
-        ).let { ForensicMathEngine.applyConsentGate(it) }
+        ).let { ConsentGate.applyConsentGate(it) }
 
         val now = System.currentTimeMillis()
         val triplets = mutableListOf<KnowledgeTripletEntity>()
@@ -614,7 +623,7 @@ class OsintScraperService(
             val combinedMeta = listOf(titleMatch, ogDescMatch).filter { it.isNotBlank() }.joinToString(" — ")
             if (combinedMeta.length >= 12) {
                 extracted.add(
-                    ForensicMathEngine.createTimestampedArtifact(
+                    StylometryEngine.createTimestampedArtifact(
                         id = "art-meta-${System.nanoTime()}",
                         platform = "${platformLabel}_META",
                         timestampIso = metaTimestamp,
@@ -644,7 +653,7 @@ class OsintScraperService(
                     val text = listOf(headline, body).filter { it.isNotBlank() }.joinToString(": ").take(340)
                     if (text.length >= 15) {
                         extracted.add(
-                            ForensicMathEngine.createTimestampedArtifact(
+                            StylometryEngine.createTimestampedArtifact(
                                 id = "art-jsonld-$idx-${System.nanoTime()}",
                                 platform = "${platformLabel}_JSONLD",
                                 timestampIso = datePub,
@@ -673,7 +682,7 @@ class OsintScraperService(
                     .toList()
                 textValues.forEachIndexed { idx, snippet ->
                     extracted.add(
-                        ForensicMathEngine.createTimestampedArtifact(
+                        StylometryEngine.createTimestampedArtifact(
                             id = "art-nextdata-$idx-${System.nanoTime()}",
                             platform = "${platformLabel}_HYDRATION",
                             timestampIso = metaTimestamp,
@@ -702,7 +711,7 @@ class OsintScraperService(
             if (inner.length in 35..500) {
                 val ts = timeTags.getOrNull(pIndex) ?: metaTimestamp
                 extracted.add(
-                    ForensicMathEngine.createTimestampedArtifact(
+                    StylometryEngine.createTimestampedArtifact(
                         id = "art-dom-$pIndex-${System.nanoTime()}",
                         platform = platformLabel,
                         timestampIso = ts,
@@ -719,7 +728,7 @@ class OsintScraperService(
             val cleaned = extractCleanTextFromHtml(html)
             if (cleaned.isNotBlank()) {
                 extracted.add(
-                    ForensicMathEngine.createTimestampedArtifact(
+                    StylometryEngine.createTimestampedArtifact(
                         id = "art-body-${System.nanoTime()}",
                         platform = platformLabel,
                         timestampIso = metaTimestamp,
@@ -745,19 +754,17 @@ class OsintScraperService(
         return fallback
     }
 
-    private fun cleanHtmlEntities(input: String): String {
-        return input
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&apos;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&nbsp;", " ")
-            .replace("\\n", " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
+    private fun cleanHtmlEntities(input: String): String = input
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .replace("\\n", " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
     /**
      * Allows the user to inject/append custom timestamped statements, transcripts, or scraped posts
@@ -770,7 +777,7 @@ class OsintScraperService(
         timestampIso: String
     ): SubjectProfile = withContext(Dispatchers.Default) {
         val cleanTs = timestampIso.trim().ifBlank { currentIsoUtc() }
-        val newArtifact = ForensicMathEngine.createTimestampedArtifact(
+        val newArtifact = StylometryEngine.createTimestampedArtifact(
             id = "art-custom-${System.currentTimeMillis()}",
             platform = platformLabel.uppercase(Locale.US).ifBlank { "CUSTOM_INTEL" },
             timestampIso = cleanTs,
@@ -781,20 +788,20 @@ class OsintScraperService(
         val combinedCorpus = updatedArtifacts.joinToString(" ") { it.verbatimText }
         val hours = updatedArtifacts.filter { it.hasKnownHour }.map { it.utcHour }
 
-        val eval = ForensicMathEngine.evaluateCorpus(
+        val eval = StylometryEngine.evaluateCorpus(
             rawText = combinedCorpus,
             repoCount = activeProfile.githubRepos.size,
             hfCount = activeProfile.huggingFaceAssets.size,
             followerCount = 0
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(hours, declaredLocationOf(activeProfile))
-        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
+        val chrono = ChronoGeoEngine.evaluateChronoAndGeo(hours, declaredLocationOf(activeProfile))
+        val lingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
             handle = activeProfile.handle,
             eval = eval,
             chrono = chrono,
             artifactsCount = updatedArtifacts.size
         )
-        val insights = ForensicMathEngine.synthesizeActionableInsights(
+        val insights = PlaybookEngine.synthesizeActionableInsights(
             handle = activeProfile.handle,
             eval = eval,
             chrono = chrono,
@@ -803,7 +810,7 @@ class OsintScraperService(
             healedPatchId = activeProfile.healedPatchId,
             lingProfile = lingProfile
         )
-        val newHash = ForensicMathEngine.sha256("${activeProfile.handle}:${updatedArtifacts.size}:${eval.burrowsDelta}")
+        val newHash = ForensicCommon.sha256("${activeProfile.handle}:${updatedArtifacts.size}:${eval.burrowsDelta}")
 
         activeProfile.copy(
             burrowsDelta = eval.burrowsDelta,
@@ -823,7 +830,7 @@ class OsintScraperService(
             updatedAt = System.currentTimeMillis(),
             corpusWordCount = eval.tokenCount,
             dataProvenance = appendProvenance(activeProfile.dataProvenance, "MANUAL")
-        ).let { ForensicMathEngine.applyConsentGate(it) }
+        ).let { ConsentGate.applyConsentGate(it) }
     }
 
     /**
@@ -834,23 +841,23 @@ class OsintScraperService(
     suspend fun recomputeFromArtifacts(profile: SubjectProfile): SubjectProfile = withContext(Dispatchers.Default) {
         val artifacts = profile.scrapedArtifacts
         val corpus = artifacts.joinToString(" ") { it.verbatimText }
-        val eval = ForensicMathEngine.evaluateCorpus(
+        val eval = StylometryEngine.evaluateCorpus(
             rawText = corpus,
             repoCount = profile.githubRepos.size,
             hfCount = profile.huggingFaceAssets.size,
             followerCount = 0
         )
-        val chrono = ForensicMathEngine.evaluateChronoAndGeo(
+        val chrono = ChronoGeoEngine.evaluateChronoAndGeo(
             artifacts.filter { it.hasKnownHour }.map { it.utcHour },
             declaredLocationOf(profile)
         )
-        val lingProfile = ForensicMathEngine.buildLinguisticPersonalityProfile(
+        val lingProfile = StylometryEngine.buildLinguisticPersonalityProfile(
             handle = profile.handle,
             eval = eval,
             chrono = chrono,
             artifactsCount = artifacts.size
         )
-        val insights = ForensicMathEngine.synthesizeActionableInsights(
+        val insights = PlaybookEngine.synthesizeActionableInsights(
             handle = profile.handle,
             eval = eval,
             chrono = chrono,
@@ -877,7 +884,7 @@ class OsintScraperService(
             actionableInsights = insights,
             corpusWordCount = eval.tokenCount,
             updatedAt = System.currentTimeMillis()
-        ).let { ForensicMathEngine.applyConsentGate(it) }
+        ).let { ConsentGate.applyConsentGate(it) }
     }
 
     /** The location the subject publicly declared, if known (never a restricted/inferred label). */
@@ -885,15 +892,20 @@ class OsintScraperService(
         val raw = profile.loc
         return when {
             raw.isBlank() -> null
-            raw.startsWith(ForensicMathEngine.RESTRICTED_LABEL) -> null
+            raw.startsWith(ConsentGate.RESTRICTED_LABEL) -> null
             raw.startsWith("DECLARED: ") -> raw.removePrefix("DECLARED: ").trim()
             raw.startsWith("UNKNOWN") || raw.startsWith("MERIDIAN") -> null
             else -> raw.substringBefore("(").substringBefore("//").trim().ifBlank { null }
         }
     }
 
-    private fun appendProvenance(existing: String, tag: String): String =
-        if (existing.isBlank()) tag else if (existing.contains(tag)) existing else "$existing + $tag"
+    private fun appendProvenance(existing: String, tag: String): String = if (existing.isBlank()) {
+        tag
+    } else if (existing.contains(tag)) {
+        existing
+    } else {
+        "$existing + $tag"
+    }
 
     /**
      * Looks up reference tools on GitHub and Hugging Face and links them in the knowledge graph as
@@ -902,9 +914,7 @@ class OsintScraperService(
      * (The previous version merged strangers' repo descriptions into the subject's text and re-scored
      * their personality from it.)
      */
-    suspend fun harvestGithubAndHuggingFaceEnhancements(
-        activeProfile: SubjectProfile
-    ): ScrapeIngestionResult = withContext(Dispatchers.IO) {
+    suspend fun harvestGithubAndHuggingFaceEnhancements(activeProfile: SubjectProfile): ScrapeIngestionResult = withContext(Dispatchers.IO) {
         val httpProbes = mutableListOf<HttpEndpointProbe>()
         val toolRepos = mutableListOf<GithubRepoItem>()
         val toolModels = mutableListOf<HuggingFaceAsset>()
@@ -953,7 +963,7 @@ class OsintScraperService(
         httpProbes.add(hfResp.toProbe(toolModels.size))
 
         val now = System.currentTimeMillis()
-        val refHash = ForensicMathEngine.sha256("${activeProfile.handle}:REFERENCE_TOOLS:$now")
+        val refHash = ForensicCommon.sha256("${activeProfile.handle}:REFERENCE_TOOLS:$now")
         val newTriplets = mutableListOf<KnowledgeTripletEntity>()
         toolRepos.take(3).forEachIndexed { idx, r ->
             newTriplets.add(
@@ -1029,7 +1039,7 @@ class OsintScraperService(
                         )
                     )
                     artifactsList.add(
-                        ForensicMathEngine.createTimestampedArtifact(
+                        StylometryEngine.createTimestampedArtifact(
                             id = "art-hf-$i-${System.nanoTime()}",
                             platform = "HUGGING_FACE",
                             timestampIso = lastMod,

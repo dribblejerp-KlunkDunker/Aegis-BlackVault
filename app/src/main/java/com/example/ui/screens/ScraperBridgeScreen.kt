@@ -29,7 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.ForensicMathEngine
+import com.example.engine.WalledGardenCatalog
 import com.example.model.*
 import com.example.ui.theme.*
 import java.util.Locale
@@ -62,7 +62,7 @@ fun ScraperBridgeScreen(
     var customPlatform by remember { mutableStateOf("REDDIT_POST") }
     var customTimestamp by remember { mutableStateOf("2026-11-08T18:30:00Z") }
 
-    val currentSpec = remember(scraperUri) { ForensicMathEngine.detectWalledGarden(scraperUri) }
+    val currentSpec = remember(scraperUri) { WalledGardenCatalog.detectWalledGarden(scraperUri) }
     val activePatch = remember(currentSpec, astPatches) {
         if (currentSpec != null && astPatches.containsKey(currentSpec.key)) {
             astPatches[currentSpec.key]
@@ -167,12 +167,12 @@ fun ScraperBridgeScreen(
                     Triple("GH: karpathy", "karpathy", null),
                     Triple("HF: thomwolf", "https://huggingface.co/thomwolf", null),
                     Triple("URL: github.com/torvalds", "https://github.com/torvalds", null),
-                    Triple("TikTok", ForensicMathEngine.WALLED_GARDEN_CATALOG["tiktok"]!!.sampleUrl, "tiktok"),
-                    Triple("Instagram", ForensicMathEngine.WALLED_GARDEN_CATALOG["instagram"]!!.sampleUrl, "instagram"),
-                    Triple("YouTube", ForensicMathEngine.WALLED_GARDEN_CATALOG["youtube"]!!.sampleUrl, "youtube"),
-                    Triple("Reddit", ForensicMathEngine.WALLED_GARDEN_CATALOG["reddit"]!!.sampleUrl, "reddit"),
-                    Triple("Facebook", ForensicMathEngine.WALLED_GARDEN_CATALOG["facebook"]!!.sampleUrl, "facebook"),
-                    Triple("OnlyFans", ForensicMathEngine.WALLED_GARDEN_CATALOG["onlyfans"]!!.sampleUrl, "onlyfans")
+                    Triple("TikTok", WalledGardenCatalog.WALLED_GARDEN_CATALOG["tiktok"]!!.sampleUrl, "tiktok"),
+                    Triple("Instagram", WalledGardenCatalog.WALLED_GARDEN_CATALOG["instagram"]!!.sampleUrl, "instagram"),
+                    Triple("YouTube", WalledGardenCatalog.WALLED_GARDEN_CATALOG["youtube"]!!.sampleUrl, "youtube"),
+                    Triple("Reddit", WalledGardenCatalog.WALLED_GARDEN_CATALOG["reddit"]!!.sampleUrl, "reddit"),
+                    Triple("Facebook", WalledGardenCatalog.WALLED_GARDEN_CATALOG["facebook"]!!.sampleUrl, "facebook"),
+                    Triple("OnlyFans", WalledGardenCatalog.WALLED_GARDEN_CATALOG["onlyfans"]!!.sampleUrl, "onlyfans")
                 )
 
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -890,12 +890,7 @@ fun ScraperBridgeScreen(
 }
 
 @Composable
-private fun RoomCounterBadge(
-    label: String,
-    count: Int,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
+private fun RoomCounterBadge(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .background(ObsidianBg, RoundedCornerShape(4.dp))

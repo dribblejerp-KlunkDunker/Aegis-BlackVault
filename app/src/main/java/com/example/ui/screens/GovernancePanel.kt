@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.DatabaseEncryption
@@ -78,7 +79,7 @@ fun GovernancePanel(
         if (controls != null && project != null) {
             item {
                 GovCard("PROJECT · ${project.name}", CyanTelemetry) {
-                    GovLine("Isolation", "Subjects, artifacts, graph and triplets stay in this project")
+                    GovLine("Isolation", "Subjects, artifacts, graph and triplets stay here")
                     GovLine("Retention", if (project.retentionDays > 0) "${project.retentionDays} days" else "Keep")
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -129,7 +130,9 @@ fun GovernancePanel(
                 GovLine("Provenance", subject.dataProvenance.ifBlank { "Unknown" }.take(120))
                 withCustody.take(4).forEach { art ->
                     Text(
-                        text = "${art.platform} · HTTP ${art.httpStatus} · ${fmt(art.fetchedAtMillis)}\n${art.sourceUrl.take(70)}\nsha256 ${art.rawResponseSha256.take(16)}… · ${art.connectorRunId.take(28)}",
+                        text = "${art.platform} · HTTP ${art.httpStatus} · ${fmt(
+                            art.fetchedAtMillis
+                        )}\n${art.sourceUrl.take(70)}\nsha256 ${art.rawResponseSha256.take(16)}… · ${art.connectorRunId.take(28)}",
                         color = TextSecondary,
                         fontSize = 9.5.sp,
                         lineHeight = 13.sp,
@@ -191,8 +194,11 @@ fun GovernancePanel(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("App lock", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            if (appLockAvailable) "Ask for biometric or screen lock on launch and on return"
-                            else "Unavailable: set a screen lock on this device first",
+                            if (appLockAvailable) {
+                                "Ask for biometric or screen lock on launch and on return"
+                            } else {
+                                "Unavailable: set a screen lock on this device first"
+                            },
                             color = TextSecondary,
                             fontSize = 9.5.sp
                         )
@@ -333,9 +339,18 @@ private fun GovCard(title: String, accent: Color, content: @Composable () -> Uni
 
 @Composable
 private fun GovLine(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = TextSecondary, fontSize = 10.sp)
-        Text(value, color = TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    // Label keeps its natural width; a long value wraps in the remaining space, right-aligned,
+    // instead of running into the label.
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = TextSecondary, fontSize = 10.sp, maxLines = 1)
+        Text(
+            value,
+            color = TextPrimary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

@@ -27,15 +27,15 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ExportEngine
 import com.example.model.*
 import com.example.ui.theme.*
 import java.util.Locale
@@ -92,7 +92,7 @@ fun InsightsAndExportScreen(
     val activeInAppKey = inAppApiKeys[selectedAiProvider].orEmpty()
 
     val stixBundleJson = remember(activeSubject, astPatches) {
-        ForensicMathEngine.buildStix21BundleJson(activeSubject, astPatches)
+        ExportEngine.buildStix21BundleJson(activeSubject, astPatches)
     }
 
     val subjectRawEntities = remember(rawSocialEntities, activeSubject.id) {
@@ -539,7 +539,13 @@ fun InsightsAndExportScreen(
                                             .padding(horizontal = 10.dp, vertical = 6.dp)
                                     ) {
                                         Text(
-                                            text = if (githubTokenDraft.isBlank() && githubTokenConfigured) "CLEAR GITHUB TOKEN" else "SAVE GITHUB TOKEN",
+                                            text = if (githubTokenDraft.isBlank() &&
+                                                githubTokenConfigured
+                                            ) {
+                                                "CLEAR GITHUB TOKEN"
+                                            } else {
+                                                "SAVE GITHUB TOKEN"
+                                            },
                                             color = providerColor,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold
@@ -831,7 +837,9 @@ fun InsightsAndExportScreen(
 
                                 Button(
                                     onClick = {
-                                        val fileName = "aegis_${activeSubject.handle.lowercase(Locale.US)}.${selectedExportFormat.extension}"
+                                        val fileName = "aegis_${activeSubject.handle.lowercase(
+                                            Locale.US
+                                        )}.${selectedExportFormat.extension}"
                                         createDocumentLauncher.launch(fileName)
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -1288,7 +1296,11 @@ fun InsightsAndExportScreen(
                             ) {
                                 Column {
                                     Text("raw_social_media_entities", color = CyanTelemetry, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    Text("${rawSocialEntities.size} Total (${subjectRawEntities.size} Active)", color = TextPrimary, fontSize = 11.sp)
+                                    Text(
+                                        "${rawSocialEntities.size} Total (${subjectRawEntities.size} Active)",
+                                        color = TextPrimary,
+                                        fontSize = 11.sp
+                                    )
                                 }
                                 Column {
                                     Text("linguistic_personality_profiles", color = VioletHf, fontSize = 9.sp, fontWeight = FontWeight.Bold)
@@ -1296,7 +1308,11 @@ fun InsightsAndExportScreen(
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("mind_map_hierarchy_edges", color = AmberSignal, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    Text("${mindMapHierarchyEntities.size} Edges (${subjectHierarchy.size} Active)", color = TextPrimary, fontSize = 11.sp)
+                                    Text(
+                                        "${mindMapHierarchyEntities.size} Edges (${subjectHierarchy.size} Active)",
+                                        color = TextPrimary,
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                         }
@@ -1443,7 +1459,9 @@ fun InsightsAndExportScreen(
                                         fontSize = 10.sp
                                     )
                                     Text(
-                                        text = "MARKERS: [${raw.lexicalMarkersCsv}] | TONE: ${raw.sentimentScore} | SHA256: ${raw.provSha256.take(16)}...",
+                                        text = "MARKERS: [${raw.lexicalMarkersCsv}] | TONE: ${raw.sentimentScore} | SHA256: ${raw.provSha256.take(
+                                            16
+                                        )}...",
                                         color = TextSecondary,
                                         fontSize = 8.sp
                                     )
@@ -1517,7 +1535,9 @@ fun InsightsAndExportScreen(
                             ) {
                                 cypherRows.forEach { row ->
                                     Text(
-                                        text = "(${row.getOrElse(0) { "" }}) -[${row.getOrElse(1) { "" }}]-> (${row.getOrElse(2) { "" }}) [conf=${row.getOrElse(3) { "" }}]",
+                                        text = "(${row.getOrElse(0) {
+                                            ""
+                                        }}) -[${row.getOrElse(1) { "" }}]-> (${row.getOrElse(2) { "" }}) [conf=${row.getOrElse(3) { "" }}]",
                                         color = TextPrimary,
                                         fontSize = 10.sp
                                     )

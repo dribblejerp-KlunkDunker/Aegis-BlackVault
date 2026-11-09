@@ -13,22 +13,24 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
-import com.example.engine.ForensicMathEngine
+import com.example.engine.ExportEngine
+import com.example.engine.ForensicCommon
+import com.example.engine.WalledGardenCatalog
 import com.example.model.*
 import com.example.network.MultiAiAndDataPortabilityService
 import com.example.network.OsintScraperService
 import com.example.security.AppLock
 import com.example.security.SecureKeyVault
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class AegisUiState(
     val profiles: List<SubjectProfile> = emptyList(),
@@ -76,7 +78,11 @@ data class AegisUiState(
     val selectedExportFormat: DataExportFormat = DataExportFormat.AGENT_HANDOFF,
     val telemetryLogs: List<TelemetryLog> = listOf(
         TelemetryLog("20:47:01.104", "PROV_O", "AEGIS TERMINAL INITIALIZED // GEMINI + CLAUDE + PERPLEXITY + OKHTTP ARMED."),
-        TelemetryLog("20:47:01.412", "ROOM_DAO", "NORMALIZED ROOM TABLES ARMED: raw_social_media_entities, linguistic_personality_profiles, mind_map_hierarchy_edges.")
+        TelemetryLog(
+            "20:47:01.412",
+            "ROOM_DAO",
+            "NORMALIZED ROOM TABLES ARMED: raw_social_media_entities, linguistic_personality_profiles, mind_map_hierarchy_edges."
+        )
     ),
     val exportBannerMessage: String? = null
 ) {
@@ -245,13 +251,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private data class Tuple5<A, B, C, D, E>(
-        val first: A,
-        val second: B,
-        val third: C,
-        val fourth: D,
-        val fifth: E
-    )
+    private data class Tuple5<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
 
     private fun nowStamp(): String {
         val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
@@ -285,6 +285,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     else -> ScraperPlatformMode.DIRECT_URL
                 }
             }
+
             else -> _uiState.value.selectedPlatformMode
         }
         _uiState.update {
@@ -308,8 +309,11 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
         appendLog(
             "DEFCON",
-            if (_uiState.value.containmentOverride) "AEGIS CONTAINMENT OVERRIDE ENGAGED (DEFCON 3 LOCK)"
-            else "CONTAINMENT OVERRIDE RELEASED // LIVE THREAT EVALUATION"
+            if (_uiState.value.containmentOverride) {
+                "AEGIS CONTAINMENT OVERRIDE ENGAGED (DEFCON 3 LOCK)"
+            } else {
+                "CONTAINMENT OVERRIDE RELEASED // LIVE THREAT EVALUATION"
+            }
         )
     }
 
@@ -400,21 +404,13 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
     // ========================================================================
 
     /**
-     * Records the consent status for the active subject, appends a timestamped entry to its provenance
-     * audit trail, and recomputes all scores from stored artifacts. Restricted outputs appear only when
-     * the new status is SELF or CONSENTED; switching back to UNVERIFIED strips them again on save.
-     * Demo personas are fixed and cannot be changed.
-     */
-    /**
      * Records consent for the active subject. SELF implies [ConsentMethod.SELF_DECLARED]; CONSENTED needs
      * a method (written or verbal) and may carry an expiry. UNVERIFIED clears the record. Every change is
-     * written to the hash-chained audit log and recomputes scores from stored artifacts.
+     * written to the hash-chained audit log and recomputes scores from stored artifacts, so restricted
+     * outputs appear only for SELF or CONSENTED and are stripped again on switching back.
+     * Demo personas are fixed and cannot be changed.
      */
-    fun setSubjectConsent(
-        status: ConsentStatus,
-        method: ConsentMethod? = null,
-        expiryDays: Int = 0
-    ) {
+    fun setSubjectConsent(status: ConsentStatus, method: ConsentMethod? = null, expiryDays: Int = 0) {
         val active = _uiState.value.activeSubject ?: return
         if (active.consentStatus == ConsentStatus.DEMO || status == ConsentStatus.DEMO) return
         val effectiveMethod = when (status) {
@@ -466,7 +462,10 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 File(context.cacheDir, "exports").listFiles()?.filter { it.name.contains(safeHandle) }?.forEach { it.delete() }
             }
             val removed = repository.deleteSubject(subject.id, subject.handle, reason = "user request")
-            appendLog("ERASURE", if (removed) "SUBJECT ERASED: profile, artifacts, graph edges, triplets, cached exports" else "NOTHING TO ERASE")
+            appendLog(
+                "ERASURE",
+                if (removed) "SUBJECT ERASED: profile, artifacts, graph edges, triplets, cached exports" else "NOTHING TO ERASE"
+            )
             _uiState.update { state ->
                 val next = state.profiles.firstOrNull { it.id != subject.id }?.id ?: state.selectedSubjectId
                 state.copy(selectedSubjectId = next)
@@ -670,10 +669,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun copyFormattedPayloadToClipboard(
-        context: Context,
-        format: DataExportFormat = _uiState.value.selectedExportFormat
-    ) {
+    fun copyFormattedPayloadToClipboard(context: Context, format: DataExportFormat = _uiState.value.selectedExportFormat) {
         val subject = _uiState.value.activeSubject ?: return
         val payload = buildFormattedPayload(format)
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -684,22 +680,22 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         appendLog("EXPORT_CLIP", "COPIED ${format.label} (${payload.length} BYTES) TO SYSTEM CLIPBOARD.")
-        auditAsync(AuditAction.EXPORT, subject.id, "${format.name} copied to clipboard (${payload.length} chars); consent=${subject.consentStatus.name}")
+        auditAsync(
+            AuditAction.EXPORT,
+            subject.id,
+            "${format.name} copied to clipboard (${payload.length} chars); consent=${subject.consentStatus.name}"
+        )
     }
 
-    fun writeExportToDocumentUri(
-        context: Context,
-        uri: Uri,
-        format: DataExportFormat = _uiState.value.selectedExportFormat
-    ) {
+    fun writeExportToDocumentUri(context: Context, uri: Uri, format: DataExportFormat = _uiState.value.selectedExportFormat) {
         val subject = _uiState.value.activeSubject ?: return
         val patches = _uiState.value.astPatches.values.toList()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     if (format == DataExportFormat.PKZIP_STIX) {
-                        val stixJson = ForensicMathEngine.buildStix21BundleJson(subject, patches)
-                        val zipBytes = ForensicMathEngine.createProjectZipBytes(subject, patches, stixJson)
+                        val stixJson = ExportEngine.buildStix21BundleJson(subject, patches)
+                        val zipBytes = ExportEngine.createProjectZipBytes(subject, patches, stixJson)
                         out.write(zipBytes)
                     } else {
                         val payload = buildFormattedPayload(format)
@@ -719,11 +715,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importFromDocumentUri(
-        context: Context,
-        uri: Uri,
-        useGeminiStructuredParser: Boolean = false
-    ) {
+    fun importFromDocumentUri(context: Context, uri: Uri, useGeminiStructuredParser: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val rawText = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
@@ -738,10 +730,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importRawPayloadText(
-        rawPayload: String,
-        useGeminiStructuredParser: Boolean = false
-    ) {
+    fun importRawPayloadText(rawPayload: String, useGeminiStructuredParser: Boolean = false) {
         val active = _uiState.value.activeSubject ?: return
         if (rawPayload.isBlank()) return
 
@@ -786,7 +775,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forceDomMutationAlert() {
         val target = _uiState.value.scraperUri.trim()
-        val spec = ForensicMathEngine.detectWalledGarden(target) ?: WalledGardenSpec(
+        val spec = WalledGardenCatalog.detectWalledGarden(target) ?: WalledGardenSpec(
             key = "custom_walled_garden",
             name = target.substringAfter("://").substringBefore("/").ifBlank { "Walled-Garden Target" },
             sampleUrl = target,
@@ -820,7 +809,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         if (target.isBlank()) return
         val mode = _uiState.value.selectedPlatformMode
 
-        val spec = ForensicMathEngine.detectWalledGarden(target)
+        val spec = WalledGardenCatalog.detectWalledGarden(target)
         val existingPatch = if (spec != null) _uiState.value.astPatches[spec.key] else null
 
         if (spec != null && !forceHeal && existingPatch == null && mode != ScraperPlatformMode.DIRECT_URL) {
@@ -914,7 +903,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             appendLog("AI_HEAL", "[3/4] Synthesized new selector: ${drift.proposedSelector}")
             delay(450)
 
-            val patchHash = ForensicMathEngine.sha256("${drift.platformKey}-${System.currentTimeMillis()}").take(6).uppercase(Locale.US)
+            val patchHash = ForensicCommon.sha256("${drift.platformKey}-${System.currentTimeMillis()}").take(6).uppercase(Locale.US)
             val newPatch = AstPatchEntity(
                 platformKey = drift.platformKey,
                 patchId = "AST-PATCH-$patchHash",
@@ -998,10 +987,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(exportBannerMessage = null) }
     }
 
-    fun exportAndShareBundle(
-        context: Context,
-        format: DataExportFormat = DataExportFormat.AGENT_HANDOFF
-    ) {
+    fun exportAndShareBundle(context: Context, format: DataExportFormat = DataExportFormat.AGENT_HANDOFF) {
         val subject = _uiState.value.activeSubject ?: return
         val patches = _uiState.value.astPatches.values.toList()
         viewModelScope.launch {
@@ -1014,8 +1000,8 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     if (format == DataExportFormat.PKZIP_STIX) {
                         // Share the actual ZIP through a FileProvider content:// URI (previously the ZIP was
                         // written to cache and never shared; only text went out).
-                        val stixJson = ForensicMathEngine.buildStix21BundleJson(subject, patches)
-                        val zipBytes = ForensicMathEngine.createProjectZipBytes(subject, patches, stixJson)
+                        val stixJson = ExportEngine.buildStix21BundleJson(subject, patches)
+                        val zipBytes = ExportEngine.createProjectZipBytes(subject, patches, stixJson)
                         val zipFile = File(exportDir, "aegis_blackvault_$safeHandle.zip")
                         zipFile.writeBytes(zipBytes)
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", zipFile)
@@ -1037,10 +1023,21 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
 
                 // The full dossier is no longer silently copied to the clipboard as a side effect of sharing.
                 _uiState.update {
-                    it.copy(exportBannerMessage = "Ready to share ${format.label} for [${subject.handle}] (consent: ${subject.consentStatus.label}).")
+                    it.copy(
+                        exportBannerMessage = "Ready to share ${format.label} for [${subject.handle}] (consent: ${subject.consentStatus.label})."
+                    )
                 }
-                appendLog("EXPORT", "SHARING ${format.label} FOR [${subject.handle}] // PROVENANCE: ${subject.dataProvenance.ifBlank { "UNKNOWN" }}")
-                repository.audit(AuditAction.EXPORT, subject.id, "${format.name} shared via share sheet; consent=${subject.consentStatus.name}")
+                appendLog(
+                    "EXPORT",
+                    "SHARING ${format.label} FOR [${subject.handle}] // PROVENANCE: ${subject.dataProvenance.ifBlank {
+                        "UNKNOWN"
+                    }}"
+                )
+                repository.audit(
+                    AuditAction.EXPORT,
+                    subject.id,
+                    "${format.name} shared via share sheet; consent=${subject.consentStatus.name}"
+                )
                 refreshAuditChain()
                 context.startActivity(Intent.createChooser(shareIntent, "Share Aegis export (${format.label})"))
             } catch (e: Exception) {
@@ -1053,12 +1050,11 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
      * Clipboard content flagged as sensitive so Android 13+ hides it from the clipboard preview
      * and keyboard suggestions (the extra is ignored on older versions).
      */
-    private fun sensitiveClip(label: String, text: String): ClipData =
-        ClipData.newPlainText(label, text).apply {
-            description.extras = PersistableBundle().apply {
-                putBoolean("android.content.extra.IS_SENSITIVE", true)
-            }
+    private fun sensitiveClip(label: String, text: String): ClipData = ClipData.newPlainText(label, text).apply {
+        description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
         }
+    }
 
     private companion object {
         /** Pre-v6 global retention; migrated into the default project once. */

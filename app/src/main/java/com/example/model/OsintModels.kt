@@ -9,13 +9,7 @@ import androidx.room.Relation
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class OceanScores(
-    val O: Int = 72,
-    val C: Int = 80,
-    val E: Int = 62,
-    val A: Int = 45,
-    val N: Int = 55
-) {
+data class OceanScores(val O: Int = 72, val C: Int = 80, val E: Int = 62, val A: Int = 45, val N: Int = 55) {
     fun toMap(): Map<String, Int> = linkedMapOf(
         "Openness (O)" to O,
         "Conscientiousness (C)" to C,
@@ -48,11 +42,7 @@ data class OceanScores(
     }
 }
 
-data class DarkTriadScores(
-    val machiavellianism: Int = 64,
-    val narcissism: Int = 58,
-    val psychopathy: Int = 42
-) {
+data class DarkTriadScores(val machiavellianism: Int = 64, val narcissism: Int = 58, val psychopathy: Int = 42) {
     fun toJson(): String = JSONObject().apply {
         put("machiavellianism", machiavellianism)
         put("narcissism", narcissism)
@@ -489,21 +479,9 @@ data class MindMapNode(
     val subjectId: String? = null
 )
 
-data class MindMapEdge(
-    val id: String,
-    val sourceId: String,
-    val targetId: String,
-    val predicate: String,
-    val confidence: Float
-)
+data class MindMapEdge(val id: String, val sourceId: String, val targetId: String, val predicate: String, val confidence: Float)
 
-data class SpectrumBar(
-    val index: Int,
-    val token: String,
-    val zScore: Float,
-    val freqPct: Float,
-    val barHeightPct: Int
-)
+data class SpectrumBar(val index: Int, val token: String, val zScore: Float, val freqPct: Float, val barHeightPct: Int)
 
 data class WalledGardenSpec(
     val key: String,
@@ -531,11 +509,7 @@ data class DomDriftState(
     val healStatusText: String = ""
 )
 
-data class TelemetryLog(
-    val ts: String,
-    val category: String,
-    val message: String
-)
+data class TelemetryLog(val ts: String, val category: String, val message: String)
 
 enum class ScraperPlatformMode(val label: String) {
     ALL("ALL VECTORS"),
@@ -557,12 +531,7 @@ data class HttpEndpointProbe(
     val statusBadge: String
 )
 
-data class AiModelOption(
-    val modelId: String,
-    val displayName: String,
-    val tierBadge: String,
-    val summary: String
-)
+data class AiModelOption(val modelId: String, val displayName: String, val tierBadge: String, val summary: String)
 
 enum class AiProviderEngine(
     val label: String,
@@ -697,11 +666,7 @@ enum class AiProviderEngine(
     }
 }
 
-enum class DataExportFormat(
-    val label: String,
-    val extension: String,
-    val mimeType: String
-) {
+enum class DataExportFormat(val label: String, val extension: String, val mimeType: String) {
     AGENT_HANDOFF("AGENT HANDOFF BUNDLE (.JSON)", "json", "application/json"),
     PKZIP_STIX("PKZIP + STIX 2.1 (.ZIP)", "zip", "application/zip"),
     ROOM_JSON("ROOM DOSSIER (.JSON)", "json", "application/json"),
@@ -713,16 +678,8 @@ enum class DataExportFormat(
 
 sealed interface AiSynthesisState {
     data object Idle : AiSynthesisState
-    data class Loading(
-        val provider: AiProviderEngine,
-        val modelId: String,
-        val statusText: String
-    ) : AiSynthesisState
-    data class Streaming(
-        val provider: AiProviderEngine,
-        val modelId: String,
-        val partialText: String
-    ) : AiSynthesisState
+    data class Loading(val provider: AiProviderEngine, val modelId: String, val statusText: String) : AiSynthesisState
+    data class Streaming(val provider: AiProviderEngine, val modelId: String, val partialText: String) : AiSynthesisState
     data class Success(
         val provider: AiProviderEngine,
         val modelId: String,
@@ -730,11 +687,7 @@ sealed interface AiSynthesisState {
         val citations: List<String> = emptyList(),
         val authSourceLabel: String = ""
     ) : AiSynthesisState
-    data class Error(
-        val provider: AiProviderEngine,
-        val modelId: String,
-        val errorMessage: String
-    ) : AiSynthesisState
+    data class Error(val provider: AiProviderEngine, val modelId: String, val errorMessage: String) : AiSynthesisState
 }
 
 // ============================================================================
@@ -911,8 +864,7 @@ enum class ConsentStatus(val label: String, val description: String) {
         get() = this != UNVERIFIED
 
     companion object {
-        fun fromName(raw: String?): ConsentStatus =
-            entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: UNVERIFIED
+        fun fromName(raw: String?): ConsentStatus = entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: UNVERIFIED
     }
 }
 
@@ -1288,20 +1240,18 @@ data class SubjectProfile(
         )
     }
 
-    fun toRawSocialMediaEntities(): List<RawSocialMediaEntity> =
-        scrapedArtifacts.map { it.toRoomEntity(subjectId = id, subjectHandle = handle, provSha256 = provSha256) }
+    fun toRawSocialMediaEntities(): List<RawSocialMediaEntity> = scrapedArtifacts.map { it.toRoomEntity(subjectId = id, subjectHandle = handle, provSha256 = provSha256) }
 
-    fun toLinguisticProfileEntity(): LinguisticPersonalityProfileEntity =
-        linguisticProfile.toRoomEntity(
-            subjectId = id,
-            subjectHandle = handle,
-            burrowsDelta = burrowsDelta,
-            styloMatch = styloMatch,
-            mattrScore = mattrScore,
-            ocean = ocean,
-            darkTriad = darkTriad,
-            evaluatedArtifactCount = scrapedArtifacts.size
-        )
+    fun toLinguisticProfileEntity(): LinguisticPersonalityProfileEntity = linguisticProfile.toRoomEntity(
+        subjectId = id,
+        subjectHandle = handle,
+        burrowsDelta = burrowsDelta,
+        styloMatch = styloMatch,
+        mattrScore = mattrScore,
+        ocean = ocean,
+        darkTriad = darkTriad,
+        evaluatedArtifactCount = scrapedArtifacts.size
+    )
 }
 
 @Entity(tableName = "knowledge_triplets", indices = [Index(value = ["projectId"])])
@@ -1468,8 +1418,4 @@ data class AuditLogEntity(
 }
 
 /** Result of re-walking the audit chain. */
-data class AuditChainStatus(
-    val entries: Int,
-    val intact: Boolean,
-    val firstBrokenSeq: Long? = null
-)
+data class AuditChainStatus(val entries: Int, val intact: Boolean, val firstBrokenSeq: Long? = null)

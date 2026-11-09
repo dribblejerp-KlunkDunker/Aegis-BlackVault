@@ -23,7 +23,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.ForensicMathEngine
+import com.example.engine.StylometryEngine
+import com.example.engine.VerdadEngine
 import com.example.model.AuditChainStatus
 import com.example.model.AuditLogEntity
 import com.example.model.ConsentMethod
@@ -209,7 +210,11 @@ fun PsychometricScreen(
                     }
 
                     if (!unlocked) {
-                        item { RestrictedNotice("Playbook sections (drivers, rapport protocol, persuasion and leverage) are withheld until consent is recorded as Self-analysis or Consented.") }
+                        item {
+                            RestrictedNotice(
+                                "Playbook sections (drivers, rapport protocol, persuasion and leverage) are withheld until consent is recorded as Self-analysis or Consented."
+                            )
+                        }
                     } else {
                         // 2. WHAT MAKES THEM TICK (Core Psychological Drivers, Ego Rewards, Fear/Friction Triggers)
                         item {
@@ -297,9 +302,21 @@ fun PsychometricScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             if (unlocked) {
-                                TraitProgressRow("Machiavellianism (Strategic Calculation)", activeSubject.darkTriad.machiavellianism, AmberSignal)
-                                TraitProgressRow("Narcissism (Ego Centrality & Status Drive)", activeSubject.darkTriad.narcissism, RustAccent)
-                                TraitProgressRow("Psychopathy (Callousness / Unfiltered Hostility)", activeSubject.darkTriad.psychopathy, AlarmRed)
+                                TraitProgressRow(
+                                    "Machiavellianism (Strategic Calculation)",
+                                    activeSubject.darkTriad.machiavellianism,
+                                    AmberSignal
+                                )
+                                TraitProgressRow(
+                                    "Narcissism (Ego Centrality & Status Drive)",
+                                    activeSubject.darkTriad.narcissism,
+                                    RustAccent
+                                )
+                                TraitProgressRow(
+                                    "Psychopathy (Callousness / Unfiltered Hostility)",
+                                    activeSubject.darkTriad.psychopathy,
+                                    AlarmRed
+                                )
                             } else {
                                 Text(
                                     text = "WITHHELD: Dark Triad estimates require recorded consent.",
@@ -439,7 +456,7 @@ fun PsychometricScreen(
 
             "DYAD_LSM" -> {
                 val (crossDelta, lsmPct) = remember(activeSubject, comparisonSubject) {
-                    ForensicMathEngine.computeDyadicLsm(activeSubject, comparisonSubject)
+                    StylometryEngine.computeDyadicLsm(activeSubject, comparisonSubject)
                 }
 
                 LazyColumn(
@@ -518,7 +535,13 @@ fun PsychometricScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = if (crossDelta < 0.40) "SOCKPUPPET / SAME AUTHOR LIKELY" else "DISTINCT AUTHORSHIP SIGNATURE",
+                                        text = if (crossDelta <
+                                            0.40
+                                        ) {
+                                            "SOCKPUPPET / SAME AUTHOR LIKELY"
+                                        } else {
+                                            "DISTINCT AUTHORSHIP SIGNATURE"
+                                        },
                                         color = PhosphorGreen,
                                         fontSize = 9.sp
                                     )
@@ -585,7 +608,7 @@ fun PsychometricScreen(
             "VERDAD" -> {
                 var customVerdadDraft by remember { mutableStateOf("") }
                 val verdadAssessment = remember(activeSubject, customVerdadDraft) {
-                    ForensicMathEngine.evaluateSovereignVerdad(activeSubject, customVerdadDraft)
+                    VerdadEngine.evaluateSovereignVerdad(activeSubject, customVerdadDraft)
                 }
                 val gateColor = when {
                     verdadAssessment.manipulationRisk >= 70 -> AlarmRed
@@ -831,11 +854,7 @@ fun PsychometricScreen(
 }
 
 @Composable
-private fun PlaybookSectionCard(
-    headerTitle: String,
-    accentColor: Color,
-    sections: List<Pair<String, List<String>>>
-) {
+private fun PlaybookSectionCard(headerTitle: String, accentColor: Color, sections: List<Pair<String, List<String>>>) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -896,11 +915,7 @@ private fun PlaybookSectionCard(
 }
 
 @Composable
-private fun TraitProgressRow(
-    label: String,
-    score: Int,
-    color: Color
-) {
+private fun TraitProgressRow(label: String, score: Int, color: Color) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -927,11 +942,7 @@ private fun TraitProgressRow(
 }
 
 @Composable
-private fun DyadComparisonBar(
-    trait: String,
-    scoreA: Int,
-    scoreB: Int
-) {
+private fun DyadComparisonBar(trait: String, scoreA: Int, scoreB: Int) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -980,10 +991,7 @@ private fun DyadComparisonBar(
  * Restricted outputs only appear for SELF / CONSENTED (or the built-in DEMO personas).
  */
 @Composable
-private fun ConsentAndProvenanceBar(
-    subject: SubjectProfile,
-    onRecordConsent: (ConsentStatus, ConsentMethod?, Int) -> Unit
-) {
+private fun ConsentAndProvenanceBar(subject: SubjectProfile, onRecordConsent: (ConsentStatus, ConsentMethod?, Int) -> Unit) {
     val isDemo = subject.consentStatus == ConsentStatus.DEMO
     var showConsentDialog by remember { mutableStateOf(false) }
     if (showConsentDialog) {
@@ -1073,11 +1081,7 @@ private fun RestrictedNotice(message: String) {
 
 /** Asks how consent was obtained and whether it expires, before recording CONSENTED. */
 @Composable
-private fun ConsentRecordDialog(
-    handle: String,
-    onDismiss: () -> Unit,
-    onConfirm: (ConsentMethod, Int) -> Unit
-) {
+private fun ConsentRecordDialog(handle: String, onDismiss: () -> Unit, onConfirm: (ConsentMethod, Int) -> Unit) {
     var method by remember { mutableStateOf(ConsentMethod.WRITTEN) }
     var expiryDays by remember { mutableStateOf(365) }
     AlertDialog(

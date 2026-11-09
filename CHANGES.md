@@ -149,6 +149,23 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   - migration tests extended to v6;
   - screenshots of the project bar, dialog and empty state.
 
+## Phase 1b — code health
+- **`ForensicMathEngine.kt` (1,667 lines) is split by domain** into `StylometryEngine`,
+  `ChronoGeoEngine`, `ConsentGate`, `PlaybookEngine`, `MindMapEngine`, `ExportEngine`,
+  `VerdadEngine`, `WalledGardenCatalog` and `ForensicCommon`, all in `com.example.engine`.
+  - The code was moved, not rewritten.
+  - Every call site now names the object that owns the function, for example
+    `ConsentGate.applyConsentGate`.
+- **ktlint 1.8.0.** The whole codebase is formatted to the `android_studio` style in
+  `.editorconfig`. CI fails on any new formatting issue.
+- **detekt 1.23.8.**
+  - The configuration is in `config/detekt/detekt.yml`: Compose-aware, with MagicNumber off.
+  - Existing findings live in `config/detekt/baseline.xml`, mostly long lines and long or complex
+    methods in the large screens. New code must pass.
+- **New CI job `kotlin-lint`.** It downloads pinned, SHA-256-verified tool jars from Maven
+  Central and uploads HTML and SARIF reports.
+- **Governance rows wrap long values** instead of running into the label.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only

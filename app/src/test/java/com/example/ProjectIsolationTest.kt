@@ -52,17 +52,21 @@ class ProjectIsolationTest {
     private var counter = 0
 
     /** A fresh collection of the same GitHub account, under a distinct subject id each time. */
-    private suspend fun scrape(): SubjectProfile =
-        scraper.scrapeAndBuildProfile(FakeGithubApi.LOGIN, ScraperPlatformMode.GITHUB).profile
-            .let { it.copy(id = "${it.id}-${counter++}") }
+    private suspend fun scrape(): SubjectProfile = scraper.scrapeAndBuildProfile(FakeGithubApi.LOGIN, ScraperPlatformMode.GITHUB).profile
+        .let { it.copy(id = "${it.id}-${counter++}") }
 
     private fun triplet(id: String, handle: String) = KnowledgeTripletEntity(
-        id = id, subjectHandle = handle, predicate = "USES", objectNode = "kotlin",
-        nodeCategory = "SKILL", confidence = 0.9f, provSha256 = "", timestamp = 1L
+        id = id,
+        subjectHandle = handle,
+        predicate = "USES",
+        objectNode = "kotlin",
+        nodeCategory = "SKILL",
+        confidence = 0.9f,
+        provSha256 = "",
+        timestamp = 1L
     )
 
-    private suspend fun idsIn(projectId: String) =
-        repository.dossiersInProject(projectId).first().map { it.subject.id }.toSet()
+    private suspend fun idsIn(projectId: String) = repository.dossiersInProject(projectId).first().map { it.subject.id }.toSet()
 
     @Test
     fun `each project sees only its own subjects, artifacts, edges and triplets`() = runTest {

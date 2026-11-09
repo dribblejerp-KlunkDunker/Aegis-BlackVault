@@ -33,28 +33,22 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.fragment.app.FragmentActivity
 import com.example.security.AppLock
 import com.example.ui.AegisViewModel
 import com.example.ui.components.InteractiveMindMapSurface
 import com.example.ui.screens.CommandDeckScreen
 import com.example.ui.screens.EmptyProjectState
+import com.example.ui.screens.InsightsAndExportScreen
 import com.example.ui.screens.ProjectBar
 import com.example.ui.screens.ProjectControls
-import com.example.ui.screens.InsightsAndExportScreen
 import com.example.ui.screens.PsychometricScreen
 import com.example.ui.screens.ScraperBridgeScreen
 import com.example.ui.theme.*
 
-private data class NavTabItem(
-    val index: Int,
-    val label: String,
-    val shortcutHint: String,
-    val icon: ImageVector,
-    val tag: String
-)
+private data class NavTabItem(val index: Int, val label: String, val shortcutHint: String, val icon: ImageVector, val tag: String)
 
 /**
  * FragmentActivity (a ComponentActivity) so the optional app lock can use BiometricPrompt.
@@ -64,6 +58,7 @@ class MainActivity : FragmentActivity() {
     /** True while the optional app lock is enabled and the user has not yet authenticated. */
     private var locked by mutableStateOf(false)
     private var prompting = false
+
     /** Prompt automatically once per lock; after a cancel the user taps UNLOCK (avoids a re-prompt loop). */
     private var autoPrompted = false
 
@@ -149,9 +144,7 @@ private fun AppLockScreen(onUnlock: () -> Unit) {
 }
 
 @Composable
-fun AegisBlackvaultApp(
-    viewModel: AegisViewModel = viewModel()
-) {
+fun AegisBlackvaultApp(viewModel: AegisViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -205,30 +198,37 @@ fun AegisBlackvaultApp(
                                 selectedTab = 0
                                 true
                             }
+
                             Key.Two, Key.NumPad2 -> {
                                 selectedTab = 1
                                 true
                             }
+
                             Key.Three, Key.NumPad3 -> {
                                 selectedTab = 2
                                 true
                             }
+
                             Key.Four, Key.NumPad4 -> {
                                 selectedTab = 3
                                 true
                             }
+
                             Key.Five, Key.NumPad5 -> {
                                 selectedTab = 4
                                 true
                             }
+
                             Key.B -> {
                                 chromebookSplitDockOverride = !(chromebookSplitDockOverride ?: false)
                                 true
                             }
+
                             Key.E -> {
                                 viewModel.exportAndShareBundle(context, uiState.selectedExportFormat)
                                 true
                             }
+
                             else -> false
                         }
                     } else {
@@ -567,12 +567,7 @@ fun AegisBlackvaultApp(
 }
 
 @Composable
-private fun ChromebookWorkstationStatusBar(
-    isChromeOsHardware: Boolean,
-    showSplitDock: Boolean,
-    activeHandle: String,
-    windowWidthDp: Int
-) {
+private fun ChromebookWorkstationStatusBar(isChromeOsHardware: Boolean, showSplitDock: Boolean, activeHandle: String, windowWidthDp: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
