@@ -2,7 +2,6 @@ package com.example
 
 import android.content.pm.PackageManager
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -36,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.fragment.app.FragmentActivity
+import com.example.security.AppLock
 import com.example.ui.AegisViewModel
 import com.example.ui.components.InteractiveMindMapSurface
 import com.example.ui.screens.CommandDeckScreen
@@ -52,14 +53,93 @@ private data class NavTabItem(
     val tag: String
 )
 
-class MainActivity : ComponentActivity() {
+/**
+ * FragmentActivity (a ComponentActivity) so the optional app lock can use BiometricPrompt.
+ */
+class MainActivity : FragmentActivity() {
+
+    /** True while the optional app lock is enabled and the user has not yet authenticated. */
+    private var locked by mutableStateOf(false)
+    private var prompting = false
+    /** Prompt automatically once per lock; after a cancel the user taps UNLOCK (avoids a re-prompt loop). */
+    private var autoPrompted = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureAppCheck(this, intent)
         enableEdgeToEdge()
+        locked = AppLock.isEnabled(this)
         setContent {
             MyApplicationTheme {
-                AegisBlackvaultApp()
+                if (locked) {
+                    AppLockScreen(onUnlock = ::requestUnlock)
+                } else {
+                    AegisBlackvaultApp()
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (locked && !autoPrompted) {
+            autoPrompted = true
+            requestUnlock()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Re-lock whenever the app leaves the foreground (not while our own unlock prompt is up).
+        if (!prompting && AppLock.isEnabled(this)) {
+            locked = true
+            autoPrompted = false
+        }
+    }
+
+    private fun requestUnlock() {
+        if (prompting || !locked) return
+        if (!AppLock.isAvailable(this)) {
+            // The device lock was removed after enabling: fail open rather than lock the user out,
+            // and switch the setting off so it is visible in Governance.
+            AppLock.setEnabled(this, false)
+            locked = false
+            return
+        }
+        prompting = true
+        AppLock.prompt(
+            activity = this,
+            onUnlocked = {
+                prompting = false
+                locked = false
+                autoPrompted = false
+            },
+            onFailed = { prompting = false }
+        )
+    }
+}
+
+@Composable
+private fun AppLockScreen(onUnlock: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ObsidianBg)
+            .testTag("app_lock_screen"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(Icons.Default.Security, contentDescription = "Locked", tint = PhosphorGreen, modifier = Modifier.size(48.dp))
+            Text("AEGIS_OS // LOCKED", color = PhosphorGreen, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("Unlock with your fingerprint, face or screen lock.", color = TextSecondary, fontSize = 12.sp)
+            Box(
+                modifier = Modifier
+                    .border(1.dp, PhosphorGreen, RoundedCornerShape(6.dp))
+                    .clickable(onClick = onUnlock)
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                    .testTag("app_unlock_btn")
+            ) {
+                Text("UNLOCK", color = PhosphorGreen, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -318,7 +398,16 @@ fun AegisBlackvaultApp(
                                 selectedSpectrumToken = uiState.selectedSpectrumToken,
                                 onSelectSpectrumToken = viewModel::selectSpectrumToken,
                                 onSelectComparisonSubject = viewModel::selectComparisonSubject,
-                                onSetConsent = viewModel::setSubjectConsent
+                                onRecordConsent = { status, method, days -> viewModel.setSubjectConsent(status, method, days) },
+                                auditEntries = uiState.auditEntries,
+                                auditChain = uiState.auditChain,
+                                retentionDays = uiState.retentionDays,
+                                appLockEnabled = uiState.appLockEnabled,
+                                appLockAvailable = uiState.appLockAvailable,
+                                onDeleteSubject = { viewModel.deleteActiveSubject(context) },
+                                onSetRetentionDays = viewModel::setRetentionDays,
+                                onSetAppLock = { enabled -> viewModel.setAppLockEnabled(context, enabled) },
+                                onVerifyAuditChain = viewModel::refreshAuditChain
                             )
 
                             3 -> ScraperBridgeScreen(

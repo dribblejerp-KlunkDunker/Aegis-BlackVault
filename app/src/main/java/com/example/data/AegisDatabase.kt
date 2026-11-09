@@ -109,6 +109,57 @@ interface AegisDao {
     suspend fun upsertAstPatch(patch: AstPatchEntity)
 
     // ------------------------------------------------------------------------
+    // 5b. Erasure and retention (Phase 2). Child tables cascade from subject_profiles;
+    //     knowledge triplets are keyed by handle, so they are deleted explicitly.
+    // ------------------------------------------------------------------------
+    @Query("DELETE FROM subject_profiles WHERE id = :subjectId")
+    suspend fun deleteSubjectRow(subjectId: String): Int
+
+    @Query("DELETE FROM knowledge_triplets WHERE subjectHandle = :handle")
+    suspend fun deleteTripletsForHandle(handle: String): Int
+
+    @Transaction
+    suspend fun deleteSubjectEverywhere(subjectId: String, handle: String): Int {
+        deleteTripletsForHandle(handle)
+        return deleteSubjectRow(subjectId)
+    }
+
+    @Query("SELECT * FROM subject_profiles WHERE updatedAt < :cutoffMillis AND consentStatus != 'DEMO'")
+    suspend fun profilesOlderThan(cutoffMillis: Long): List<SubjectProfileEntity>
+
+    // ------------------------------------------------------------------------
+    // 5c. Append-only, hash-chained audit log (Phase 2)
+    // ------------------------------------------------------------------------
+    @Query("SELECT * FROM audit_log ORDER BY seq DESC LIMIT 1")
+    suspend fun lastAuditEntry(): AuditLogEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAuditEntry(entry: AuditLogEntity): Long
+
+    @Query("SELECT * FROM audit_log ORDER BY seq ASC")
+    suspend fun allAuditEntriesAsc(): List<AuditLogEntity>
+
+    @Query("SELECT * FROM audit_log ORDER BY seq DESC LIMIT :limit")
+    fun observeRecentAudit(limit: Int): Flow<List<AuditLogEntity>>
+
+    /** Appends one entry chained to the current last entry, atomically. */
+    @Transaction
+    suspend fun appendAudit(action: String, subjectRef: String, detail: String, nowMillis: Long): AuditLogEntity {
+        val prev = lastAuditEntry()?.entryHash ?: AuditLogEntity.GENESIS_HASH
+        val hash = AuditLogEntity.computeHash(prev, nowMillis, action, subjectRef, detail)
+        val entry = AuditLogEntity(
+            timestampMillis = nowMillis,
+            action = action,
+            subjectRef = subjectRef,
+            detail = detail,
+            prevHash = prev,
+            entryHash = hash
+        )
+        val seq = insertAuditEntry(entry)
+        return entry.copy(seq = seq)
+    }
+
+    // ------------------------------------------------------------------------
     // 6. Atomic Multi-Table Intelligence Ingestion Transaction
     // ------------------------------------------------------------------------
     @Transaction
@@ -137,9 +188,10 @@ interface AegisDao {
         LinguisticPersonalityProfileEntity::class,
         MindMapHierarchyEntity::class,
         KnowledgeTripletEntity::class,
-        AstPatchEntity::class
+        AstPatchEntity::class,
+        AuditLogEntity::class
     ],
-    version = 4,
+    version = 5,
     // Schema JSON is exported to app/schemas (see room.schemaLocation in app/build.gradle.kts)
     // so future migrations can be written and tested against real schemas.
     exportSchema = true
@@ -163,6 +215,56 @@ abstract class AegisDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5 (Phase 2 governance): append-only audit log, consent records on subjects,
+         * chain-of-custody columns on collected artifacts.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `audit_log` (`seq` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`timestampMillis` INTEGER NOT NULL, `action` TEXT NOT NULL, `subjectRef` TEXT NOT NULL, " +
+                        "`detail` TEXT NOT NULL, `prevHash` TEXT NOT NULL, `entryHash` TEXT NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_audit_log_timestampMillis` ON `audit_log` (`timestampMillis`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_audit_log_subjectRef` ON `audit_log` (`subjectRef`)")
+                installAuditTriggers(db)
+
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN consentMethod TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN consentRecordedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE subject_profiles ADD COLUMN consentExpiresAt INTEGER NOT NULL DEFAULT 0")
+
+                db.execSQL("ALTER TABLE raw_social_media_entities ADD COLUMN sourceUrl TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE raw_social_media_entities ADD COLUMN fetchedAtMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE raw_social_media_entities ADD COLUMN httpStatus INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE raw_social_media_entities ADD COLUMN rawResponseSha256 TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE raw_social_media_entities ADD COLUMN connectorRunId TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /** SQLite-level enforcement that audit_log rows can be added but never changed or removed. */
+        fun installAuditTriggers(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log " +
+                    "BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log " +
+                    "BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END"
+            )
+        }
+
+        /** Installs the triggers on fresh installs too (migrations only run on upgrades). */
+        val AUDIT_TRIGGERS_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                installAuditTriggers(db)
+            }
+
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                installAuditTriggers(db)
+            }
+        }
+
         fun getInstance(context: Context): AegisDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -171,7 +273,8 @@ abstract class AegisDatabase : RoomDatabase() {
                     "aegis_blackvault.db"
                 )
                     // v3 data is migrated, never wiped. (v1/v2 were pre-release AI Studio builds only.)
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addCallback(AUDIT_TRIGGERS_CALLBACK)
                     .build()
                 INSTANCE = instance
                 instance
@@ -222,6 +325,59 @@ class AegisRepository(private val dao: AegisDao) {
             mindMapHierarchyEntities = hierarchyEntities,
             triplets = triplets
         )
+    }
+
+    // ------------------------------------------------------------------------
+    // Governance (Phase 2)
+    // ------------------------------------------------------------------------
+
+    val recentAuditFlow: Flow<List<AuditLogEntity>> = dao.observeRecentAudit(200)
+
+    /** Appends an audit entry. [detail] must never contain profile content or the subject's handle. */
+    suspend fun audit(action: AuditAction, subjectId: String?, detail: String): AuditLogEntity =
+        dao.appendAudit(
+            action = action.name,
+            subjectRef = AuditLogEntity.subjectRefFor(subjectId),
+            detail = detail.take(500),
+            nowMillis = System.currentTimeMillis()
+        )
+
+    /** Re-walks the whole chain and reports the first entry whose hash or link does not match. */
+    suspend fun verifyAuditChain(): AuditChainStatus {
+        val entries = dao.allAuditEntriesAsc()
+        var prev = AuditLogEntity.GENESIS_HASH
+        for (e in entries) {
+            val expected = AuditLogEntity.computeHash(e.prevHash, e.timestampMillis, e.action, e.subjectRef, e.detail)
+            if (e.prevHash != prev || e.entryHash != expected) {
+                return AuditChainStatus(entries = entries.size, intact = false, firstBrokenSeq = e.seq)
+            }
+            prev = e.entryHash
+        }
+        return AuditChainStatus(entries = entries.size, intact = true)
+    }
+
+    /**
+     * Erases a subject: profile, collected artifacts, linguistic profile and mind-map edges (cascade),
+     * plus knowledge triplets. The audit entry records only the pseudonymous subject reference.
+     */
+    suspend fun deleteSubject(subjectId: String, handle: String, reason: String): Boolean {
+        val removed = dao.deleteSubjectEverywhere(subjectId, handle)
+        if (removed > 0) {
+            audit(AuditAction.SUBJECT_DELETED, subjectId, "Subject erased ($reason): profile, artifacts, graph edges, triplets")
+        }
+        return removed > 0
+    }
+
+    /** Deletes non-demo subjects not updated within [retentionDays]. Returns how many were erased. */
+    suspend fun purgeExpired(retentionDays: Int, nowMillis: Long = System.currentTimeMillis()): Int {
+        if (retentionDays <= 0) return 0
+        val cutoff = nowMillis - retentionDays * 24L * 60 * 60 * 1000
+        val stale = dao.profilesOlderThan(cutoff)
+        stale.forEach { dao.deleteSubjectEverywhere(it.id, it.handle) }
+        if (stale.isNotEmpty()) {
+            audit(AuditAction.RETENTION_PURGE, null, "Retention purge: ${stale.size} subject(s) older than $retentionDays days erased")
+        }
+        return stale.size
     }
 
     suspend fun saveTriplet(triplet: KnowledgeTripletEntity) {

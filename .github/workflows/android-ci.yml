@@ -67,6 +67,14 @@ jobs:
             app/build/test-results/
           if-no-files-found: warn
 
+      - name: Upload Room schemas
+        if: success() || failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: room-schemas
+          path: app/schemas/
+          if-no-files-found: warn
+
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

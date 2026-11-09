@@ -24,6 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.ForensicMathEngine
+import com.example.model.AuditChainStatus
+import com.example.model.AuditLogEntity
+import com.example.model.ConsentMethod
 import com.example.model.ConsentStatus
 import com.example.model.SubjectProfile
 import com.example.ui.theme.*
@@ -38,7 +41,18 @@ fun PsychometricScreen(
     onSelectSpectrumToken: (String) -> Unit,
     onSelectComparisonSubject: (String) -> Unit,
     modifier: Modifier = Modifier,
-    onSetConsent: (ConsentStatus) -> Unit = {}
+    onSetConsent: (ConsentStatus) -> Unit = {},
+    /** Full consent record: status, how it was obtained, and an optional expiry in days (0 = none). */
+    onRecordConsent: (ConsentStatus, ConsentMethod?, Int) -> Unit = { status, _, _ -> onSetConsent(status) },
+    auditEntries: List<AuditLogEntity> = emptyList(),
+    auditChain: AuditChainStatus? = null,
+    retentionDays: Int = 0,
+    appLockEnabled: Boolean = false,
+    appLockAvailable: Boolean = false,
+    onDeleteSubject: () -> Unit = {},
+    onSetRetentionDays: (Int) -> Unit = {},
+    onSetAppLock: (Boolean) -> Unit = {},
+    onVerifyAuditChain: () -> Unit = {}
 ) {
     var activeSubTab by remember { mutableStateOf("PLAYBOOK") }
     val lp = activeSubject.linguisticProfile
@@ -51,7 +65,7 @@ fun PsychometricScreen(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        ConsentAndProvenanceBar(subject = activeSubject, onSetConsent = onSetConsent)
+        ConsentAndProvenanceBar(subject = activeSubject, onRecordConsent = onRecordConsent)
 
         // Sub-Tab Switcher
         Row(
@@ -66,7 +80,8 @@ fun PsychometricScreen(
                 "PLAYBOOK" to "TICK / TALK / LEVERAGE",
                 "OCEAN_LIWC" to "OCEAN & 50-WORD Δ",
                 "DYAD_LSM" to "DYADIC LSM",
-                "VERDAD" to "SOVEREIGN VERDAD"
+                "VERDAD" to "SOVEREIGN VERDAD",
+                "GOV" to "GOVERNANCE"
             ).forEach { (key, title) ->
                 val isSel = activeSubTab == key
                 Box(
@@ -97,6 +112,19 @@ fun PsychometricScreen(
         }
 
         when (activeSubTab) {
+            "GOV" -> GovernancePanel(
+                subject = activeSubject,
+                auditEntries = auditEntries,
+                auditChain = auditChain,
+                retentionDays = retentionDays,
+                appLockEnabled = appLockEnabled,
+                appLockAvailable = appLockAvailable,
+                onDeleteSubject = onDeleteSubject,
+                onSetRetentionDays = onSetRetentionDays,
+                onSetAppLock = onSetAppLock,
+                onVerifyAuditChain = onVerifyAuditChain
+            )
+
             "PLAYBOOK" -> {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -952,9 +980,20 @@ private fun DyadComparisonBar(
 @Composable
 private fun ConsentAndProvenanceBar(
     subject: SubjectProfile,
-    onSetConsent: (ConsentStatus) -> Unit
+    onRecordConsent: (ConsentStatus, ConsentMethod?, Int) -> Unit
 ) {
     val isDemo = subject.consentStatus == ConsentStatus.DEMO
+    var showConsentDialog by remember { mutableStateOf(false) }
+    if (showConsentDialog) {
+        ConsentRecordDialog(
+            handle = subject.handle,
+            onDismiss = { showConsentDialog = false },
+            onConfirm = { method, days ->
+                showConsentDialog = false
+                onRecordConsent(ConsentStatus.CONSENTED, method, days)
+            }
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -969,7 +1008,7 @@ private fun ConsentAndProvenanceBar(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = "CONSENT: ${subject.consentStatus.label} // ${subject.consentStatus.description}",
+            text = "CONSENT: ${subject.consentStatus.label}${if (subject.consentExpired) " (EXPIRED)" else ""} // ${subject.consentStatus.description}",
             color = if (subject.restrictedOutputsUnlocked) PhosphorGreen else AmberSignal,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold
@@ -988,7 +1027,13 @@ private fun ConsentAndProvenanceBar(
                             .testTag("consent_${status.name}")
                             .background(if (selected) AmberSignal else ObsidianBg, RoundedCornerShape(4.dp))
                             .border(1.dp, if (selected) AmberSignal else PhosphorGreenDim, RoundedCornerShape(4.dp))
-                            .clickable(enabled = !selected) { onSetConsent(status) }
+                            .clickable(enabled = !selected) {
+                                if (status == ConsentStatus.CONSENTED) {
+                                    showConsentDialog = true
+                                } else {
+                                    onRecordConsent(status, null, 0)
+                                }
+                            }
                             .padding(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Text(
@@ -1022,4 +1067,63 @@ private fun RestrictedNotice(message: String) {
     ) {
         Text(text = message, color = AmberSignal, fontSize = 11.sp, lineHeight = 15.sp)
     }
+}
+
+/** Asks how consent was obtained and whether it expires, before recording CONSENTED. */
+@Composable
+private fun ConsentRecordDialog(
+    handle: String,
+    onDismiss: () -> Unit,
+    onConfirm: (ConsentMethod, Int) -> Unit
+) {
+    var method by remember { mutableStateOf(ConsentMethod.WRITTEN) }
+    var expiryDays by remember { mutableStateOf(365) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Record consent for $handle") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("How did they consent?", fontSize = 12.sp)
+                listOf(ConsentMethod.WRITTEN, ConsentMethod.VERBAL).forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("consent_method_${option.name}")
+                            .clickable { method = option }
+                    ) {
+                        RadioButton(selected = method == option, onClick = { method = option })
+                        Text(option.label, fontSize = 12.sp)
+                    }
+                }
+                Text("Consent expires after:", fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(90 to "90 days", 365 to "1 year", 0 to "Never").forEach { (days, label) ->
+                        val selected = expiryDays == days
+                        Box(
+                            modifier = Modifier
+                                .testTag("consent_expiry_$days")
+                                .border(1.dp, if (selected) AmberSignal else PhosphorGreenDim, RoundedCornerShape(4.dp))
+                                .background(if (selected) AmberSignal.copy(alpha = 0.25f) else Color.Transparent, RoundedCornerShape(4.dp))
+                                .clickable { expiryDays = days }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(label, fontSize = 11.sp)
+                        }
+                    }
+                }
+                Text(
+                    "This is recorded in the audit log. Only record consent the person actually gave for this analysis.",
+                    fontSize = 11.sp,
+                    fontStyle = FontStyle.Italic
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(method, expiryDays) }, modifier = Modifier.testTag("consent_record_confirm")) {
+                Text("RECORD CONSENT")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL") } }
+    )
 }

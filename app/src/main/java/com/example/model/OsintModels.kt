@@ -116,8 +116,19 @@ data class ScrapedArtifactItem(
     val verbatimText: String,
     val contextLabel: String,
     val lexicalMarkers: List<String> = emptyList(),
-    val sentimentScore: Int = 50
+    val sentimentScore: Int = 50,
+    // Chain of custody (Phase 2): where and when this artifact was collected, and a hash of the raw
+    // response it came from. Empty/0 for manual entries and data created before v3.7.
+    val sourceUrl: String = "",
+    val fetchedAtMillis: Long = 0L,
+    val httpStatus: Int = 0,
+    val rawResponseSha256: String = "",
+    val connectorRunId: String = ""
 ) {
+    /** True when the artifact carries a real UTC hour (imports without a timestamp use -1). */
+    val hasKnownHour: Boolean
+        get() = utcHour in 0..23
+
     fun toJsonObject(): JSONObject = JSONObject().apply {
         put("id", id)
         put("platform", platform)
@@ -127,6 +138,11 @@ data class ScrapedArtifactItem(
         put("contextLabel", contextLabel)
         put("lexicalMarkers", JSONArray(lexicalMarkers))
         put("sentimentScore", sentimentScore)
+        put("sourceUrl", sourceUrl)
+        put("fetchedAtMillis", fetchedAtMillis)
+        put("httpStatus", httpStatus)
+        put("rawResponseSha256", rawResponseSha256)
+        put("connectorRunId", connectorRunId)
     }
 
     fun toRoomEntity(
@@ -147,7 +163,12 @@ data class ScrapedArtifactItem(
         lexicalMarkersCsv = lexicalMarkers.joinToString(","),
         sentimentScore = sentimentScore,
         provSha256 = provSha256,
-        ingestedAtMillis = System.currentTimeMillis()
+        ingestedAtMillis = System.currentTimeMillis(),
+        sourceUrl = sourceUrl,
+        fetchedAtMillis = fetchedAtMillis,
+        httpStatus = httpStatus,
+        rawResponseSha256 = rawResponseSha256,
+        connectorRunId = connectorRunId
     )
 
     companion object {
@@ -156,14 +177,21 @@ data class ScrapedArtifactItem(
             val markers = mutableListOf<String>()
             for (i in 0 until arr.length()) markers.add(arr.optString(i))
             return ScrapedArtifactItem(
-                id = o.optString("id", "art-1"),
-                platform = o.optString("platform", "GITHUB_COMMIT"),
-                timestampIso = o.optString("timestampIso", "2026-11-08T14:20:00Z"),
-                utcHour = o.optInt("utcHour", 14),
+                id = o.optString("id", "art-${System.nanoTime()}"),
+                platform = o.optString("platform", "UNKNOWN"),
+                // No invented timestamps: a missing time stays unknown (-1) and is excluded from
+                // activity analysis instead of defaulting to a fixed date and hour.
+                timestampIso = o.optString("timestampIso", ""),
+                utcHour = o.optInt("utcHour", -1),
                 verbatimText = o.optString("verbatimText", ""),
                 contextLabel = o.optString("contextLabel", ""),
                 lexicalMarkers = markers,
-                sentimentScore = o.optInt("sentimentScore", 50)
+                sentimentScore = o.optInt("sentimentScore", 50),
+                sourceUrl = o.optString("sourceUrl", ""),
+                fetchedAtMillis = o.optLong("fetchedAtMillis", 0L),
+                httpStatus = o.optInt("httpStatus", 0),
+                rawResponseSha256 = o.optString("rawResponseSha256", ""),
+                connectorRunId = o.optString("connectorRunId", "")
             )
         }
     }
@@ -756,7 +784,11 @@ data class SubjectProfileEntity(
     // Added in schema v4 (see AegisDatabase.MIGRATION_3_4)
     val consentStatus: String = ConsentStatus.UNVERIFIED.name,
     val corpusWordCount: Int = 0,
-    val dataProvenance: String = ""
+    val dataProvenance: String = "",
+    // Added in schema v5 (consent records)
+    val consentMethod: String = "",
+    val consentRecordedAt: Long = 0L,
+    val consentExpiresAt: Long = 0L
 ) {
     fun toDomain(
         relationalArtifacts: List<RawSocialMediaEntity>? = null,
@@ -852,7 +884,10 @@ data class SubjectProfileEntity(
             updatedAt = updatedAt,
             consentStatus = ConsentStatus.fromName(consentStatus),
             corpusWordCount = corpusWordCount,
-            dataProvenance = dataProvenance
+            dataProvenance = dataProvenance,
+            consentMethod = consentMethod,
+            consentRecordedAt = consentRecordedAt,
+            consentExpiresAt = consentExpiresAt
         )
     }
 }
@@ -929,7 +964,13 @@ data class RawSocialMediaEntity(
     val lexicalMarkersCsv: String,
     val sentimentScore: Int,
     val provSha256: String,
-    val ingestedAtMillis: Long
+    val ingestedAtMillis: Long,
+    // Added in schema v5 (chain of custody)
+    val sourceUrl: String = "",
+    val fetchedAtMillis: Long = 0L,
+    val httpStatus: Int = 0,
+    val rawResponseSha256: String = "",
+    val connectorRunId: String = ""
 ) {
     fun toDomainArtifact(): ScrapedArtifactItem = ScrapedArtifactItem(
         id = entityId,
@@ -939,7 +980,12 @@ data class RawSocialMediaEntity(
         verbatimText = rawPayloadText,
         contextLabel = sourceUri,
         lexicalMarkers = lexicalMarkersCsv.split(",").map { it.trim() }.filter { it.isNotBlank() },
-        sentimentScore = sentimentScore
+        sentimentScore = sentimentScore,
+        sourceUrl = sourceUrl,
+        fetchedAtMillis = fetchedAtMillis,
+        httpStatus = httpStatus,
+        rawResponseSha256 = rawResponseSha256,
+        connectorRunId = connectorRunId
     )
 }
 
@@ -1162,11 +1208,21 @@ data class SubjectProfile(
     /** Number of word tokens actually collected for this subject (0 = no live data). */
     val corpusWordCount: Int = 0,
     /** Where the data came from, e.g. "LIVE: GITHUB_API", "NO_DATA", "DEMO_SEED", "MANUAL". */
-    val dataProvenance: String = ""
+    val dataProvenance: String = "",
+    /** How consent was obtained (see [ConsentMethod]); empty when none recorded. */
+    val consentMethod: String = "",
+    /** When consent was recorded (epoch millis), 0 when none. */
+    val consentRecordedAt: Long = 0L,
+    /** When recorded consent lapses (epoch millis), 0 = no expiry. */
+    val consentExpiresAt: Long = 0L
 ) {
+    /** True when recorded consent has an expiry date that has passed. */
+    val consentExpired: Boolean
+        get() = consentExpiresAt > 0L && System.currentTimeMillis() >= consentExpiresAt
+
     /** True when restricted inferences (leverage, Dark Triad, violence, chrono/geo) may be computed and shown. */
     val restrictedOutputsUnlocked: Boolean
-        get() = consentStatus.unlocksRestricted
+        get() = consentStatus.unlocksRestricted && !consentExpired
 
     /** Human-readable data-quality label shown next to every score. */
     val dataQualityLabel: String
@@ -1218,7 +1274,10 @@ data class SubjectProfile(
             updatedAt = updatedAt,
             consentStatus = consentStatus.name,
             corpusWordCount = corpusWordCount,
-            dataProvenance = dataProvenance
+            dataProvenance = dataProvenance,
+            consentMethod = consentMethod,
+            consentRecordedAt = consentRecordedAt,
+            consentExpiresAt = consentExpiresAt
         )
     }
 
@@ -1310,4 +1369,68 @@ data class SovereignVerdadAssessment(
     }
 }
 
+/** How consent was obtained. Recorded with every switch to SELF or CONSENTED. */
+enum class ConsentMethod(val label: String) {
+    SELF_DECLARED("Self-analysis (my own writing)"),
+    WRITTEN("Written consent (signed or emailed)"),
+    VERBAL("Verbal consent (noted)");
 
+    companion object {
+        fun fromName(raw: String?): ConsentMethod? = entries.firstOrNull { it.name == raw }
+    }
+}
+
+/** Kinds of event written to the append-only audit log. */
+enum class AuditAction {
+    SCRAPE,
+    IMPORT,
+    CONSENT_CHANGED,
+    EXPORT,
+    AI_REQUEST,
+    SUBJECT_DELETED,
+    RETENTION_PURGE,
+    SETTINGS_CHANGED
+}
+
+/**
+ * Append-only, hash-chained audit log (schema v5). Each row stores the SHA-256 of the previous row,
+ * so editing or removing any earlier row breaks the chain; SQLite triggers also reject UPDATE and
+ * DELETE on the table. Subjects are referenced by [subjectRef], a SHA-256 of the subject id, never by
+ * handle or content, so erasing a subject leaves no readable trace of them here.
+ */
+@Entity(
+    tableName = "audit_log",
+    indices = [Index(value = ["timestampMillis"]), Index(value = ["subjectRef"])]
+)
+data class AuditLogEntity(
+    @PrimaryKey(autoGenerate = true) val seq: Long = 0,
+    val timestampMillis: Long,
+    val action: String,
+    val subjectRef: String,
+    val detail: String,
+    val prevHash: String,
+    val entryHash: String
+) {
+    companion object {
+        const val GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
+
+        fun computeHash(prevHash: String, timestampMillis: Long, action: String, subjectRef: String, detail: String): String {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val payload = listOf(prevHash, timestampMillis.toString(), action, subjectRef, detail).joinToString("\u001F")
+            return md.digest(payload.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        }
+
+        fun subjectRefFor(subjectId: String?): String {
+            if (subjectId.isNullOrBlank()) return ""
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            return md.digest("aegis-subject:$subjectId".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        }
+    }
+}
+
+/** Result of re-walking the audit chain. */
+data class AuditChainStatus(
+    val entries: Int,
+    val intact: Boolean,
+    val firstBrokenSeq: Long? = null
+)

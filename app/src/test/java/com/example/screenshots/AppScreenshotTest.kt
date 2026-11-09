@@ -83,6 +83,23 @@ class AppScreenshotTest {
     @Config(sdk = [36], qualifiers = "w1280dp-h800dp-land-xhdpi")
     fun chromebook_every_tab() = captureEveryTab("chromebook")
 
+    private fun captureGovernance(prefix: String) {
+        waitForSeedData()
+        composeTestRule.onNodeWithTag("nav_tab_psych", useUnmergedTree = true).performClick()
+        settle()
+        composeTestRule.onNodeWithTag("psych_subtab_GOV").performClick()
+        settle()
+        composeTestRule.onRoot().captureRoboImage("$out/${prefix}_6_governance.png")
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
+    fun phone_governance_tab() = captureGovernance("phone")
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w1280dp-h800dp-land-xhdpi")
+    fun chromebook_governance_tab() = captureGovernance("chromebook")
+
     @Test
     @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
     fun phone_tab_tour_gif() {
