@@ -224,9 +224,12 @@ class OsintScraperService(
             val spec = connector.spec
             val runId = "$baseRunId-${spec.id}"
             val requestsBefore = acc.requestsMade
+            val refusal = connector.refusal(target)
             val (status, detail) = when {
                 spec.requiresOptIn && spec.id !in optedInConnectors ->
                     ConnectorRunStatus.SKIPPED_NOT_OPTED_IN to "turn it on under Connectors to let it contact the site"
+
+                refusal != null -> refusal
 
                 !rateLimiter.tryAcquire(spec.id, spec.maxRequestsPerMinute, spec.requestsPerRun) ->
                     ConnectorRunStatus.SKIPPED_RATE_LIMITED to "more than ${spec.maxRequestsPerMinute} requests a minute; try again shortly"

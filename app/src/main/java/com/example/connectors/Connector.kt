@@ -112,6 +112,12 @@ interface Connector {
     fun appliesTo(target: CollectionTarget): Boolean
 
     /**
+     * A reason to refuse [target] without sending anything (for example platform terms or an invalid
+     * URL), checked before the rate budget is charged. Null means go ahead.
+     */
+    fun refusal(target: CollectionTarget): Pair<ConnectorRunStatus, String>? = null
+
+    /**
      * Collects into [acc]. Returns the run's status (COLLECTED, NOTHING_FOUND, a BLOCKED_* status or
      * FAILED) and a short detail line. Must stamp custody on every artifact it adds, with [runId].
      */

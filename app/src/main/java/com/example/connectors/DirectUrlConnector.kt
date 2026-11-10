@@ -56,21 +56,27 @@ object DirectUrlConnector : Connector {
         runId: String
     ): Pair<ConnectorRunStatus, String> {
         val targetUrl = target.explicitUrl.orEmpty()
-        val refusal = refuseByTerms(targetUrl) ?: refuseByRobots(targetUrl, acc, tools)
-        return refusal ?: fetchPage(targetUrl, acc, tools, runId)
+        // The orchestrator already applied refusal(); checked again so a direct call can never bypass it.
+        return refusal(target) ?: refuseByRobots(targetUrl, acc, tools) ?: fetchPage(targetUrl, acc, tools, runId)
     }
 
-    private fun refuseByTerms(targetUrl: String): Pair<ConnectorRunStatus, String>? = prohibitedPlatform(targetUrl)?.let { platform ->
-        ConnectorRunStatus.BLOCKED_PLATFORM_TERMS to
-            "$platform's terms prohibit automated collection; import your own account export instead"
+    /** Platform terms and URL shape, decided before any request or rate-budget charge. */
+    override fun refusal(target: CollectionTarget): Pair<ConnectorRunStatus, String>? {
+        val targetUrl = target.explicitUrl.orEmpty()
+        prohibitedPlatform(targetUrl)?.let { platform ->
+            return ConnectorRunStatus.BLOCKED_PLATFORM_TERMS to
+                "$platform's terms prohibit automated collection; import your own account export instead"
+        }
+        val uri = runCatching { URI(targetUrl) }.getOrNull()
+        val scheme = uri?.scheme?.lowercase(Locale.US)
+        val isWebUrl = (scheme == "http" || scheme == "https") && !uri?.host.isNullOrBlank()
+        return if (isWebUrl) null else ConnectorRunStatus.FAILED to "not an http(s) URL"
     }
 
     /** robots.txt first (RFC 9309); an unreachable file counts as "disallow everything". */
     private fun refuseByRobots(targetUrl: String, acc: EvidenceAccumulator, tools: ConnectorToolkit): Pair<ConnectorRunStatus, String>? {
-        val uri = runCatching { URI(targetUrl) }.getOrNull()
-        val scheme = uri?.scheme?.lowercase(Locale.US)
-        val isWebUrl = scheme == "http" || scheme == "https"
-        if (uri == null || uri.host.isNullOrBlank() || !isWebUrl) return ConnectorRunStatus.FAILED to "not an http(s) URL"
+        val uri = URI(targetUrl) // refusal() has already rejected anything that isn't a valid http(s) URL
+        val scheme = uri.scheme.lowercase(Locale.US)
 
         val robotsResp = tools.executeHttpGet("$scheme://${uri.rawAuthority}/robots.txt", "ROBOTS_TXT", "text/plain")
         acc.requestsMade++

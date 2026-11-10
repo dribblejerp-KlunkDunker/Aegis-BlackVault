@@ -178,6 +178,9 @@ class ConnectorTest {
             assertEquals(url, ConnectorRunStatus.BLOCKED_PLATFORM_TERMS, run.status)
             assertTrue(url, FakeGithubApi.requestedUrls.isEmpty())
         }
+        // Refusals send nothing, so they must not use up the rate budget either.
+        val after = scraper.scrapeAndBuildProfile(FakeGithubApi.ARTICLE_URL, ScraperPlatformMode.DIRECT_URL, directUrl)
+        assertEquals(ConnectorRunStatus.COLLECTED, after.connectorRuns.single { it.connectorId == DirectUrlConnector.spec.id }.status)
         assertNull(DirectUrlConnector.prohibitedPlatform("https://pages.example/notes"))
         assertNull("look-alike hosts are not matched", DirectUrlConnector.prohibitedPlatform("https://notx.com/a"))
     }
