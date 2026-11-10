@@ -21,6 +21,10 @@ enum class ConnectorKind(val label: String, val description: String) {
     ACTIVE(
         "Active",
         "Contacts the target's own site. Off until you opt in, and always respects robots.txt."
+    ),
+    LOCAL(
+        "Local",
+        "Reads files or text you provide. Contacts nothing."
     )
 }
 
@@ -173,7 +177,7 @@ class ConnectorRateLimiter(private val nowMillis: () -> Long = System::currentTi
 
 /** Every connector the app ships, in the order they run. */
 object ConnectorRegistry {
-    val all: List<Connector> = listOf(GithubConnector, HuggingFaceConnector, DirectUrlConnector)
+    val all: List<Connector> = listOf(GithubConnector, HuggingFaceConnector, DirectUrlConnector, FeedConnector, ManualImportConnector)
 
     fun byId(id: String): Connector? = all.find { it.spec.id == id }
 }

@@ -528,7 +528,8 @@ fun ScraperBridgeScreen(
                                 }
                             }
                             Text(
-                                text = "TONE: ${art.sentimentScore}/100 | UTC HR: ${String.format(Locale.US, "%02d:00", art.utcHour)}",
+                                text = "TONE: ${art.sentimentScore}/100 | UTC HR: " +
+                                    if (art.hasKnownHour) String.format(Locale.US, "%02d:00", art.utcHour) else "undated",
                                 color = CyanTelemetry,
                                 fontSize = 9.sp
                             )
@@ -634,7 +635,11 @@ private fun ConnectorPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val kindColor = if (spec.kind == ConnectorKind.ACTIVE) AmberSignal else PhosphorGreen
+                val kindColor = when (spec.kind) {
+                    ConnectorKind.ACTIVE -> AmberSignal
+                    ConnectorKind.PASSIVE -> PhosphorGreen
+                    ConnectorKind.LOCAL -> CyanTelemetry
+                }
                 Text(
                     spec.kind.label.uppercase(Locale.US),
                     color = kindColor,
@@ -647,11 +652,11 @@ private fun ConnectorPanel(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(spec.displayName, color = TextPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "${spec.endpoints} · ${spec.maxRequestsPerMinute} req/min",
+                        spec.endpoints + if (spec.maxRequestsPerMinute > 0) " · ${spec.maxRequestsPerMinute} req/min" else "",
                         color = TextSecondary,
                         fontSize = 9.sp
                     )
-                    if (spec.requiresOptIn) {
+                    if (spec.kind != ConnectorKind.PASSIVE) {
                         Text(spec.termsNote, color = TextMuted, fontSize = 8.5.sp, lineHeight = 11.sp)
                     }
                     run?.let {
@@ -676,7 +681,7 @@ private fun ConnectorPanel(
                         modifier = Modifier.testTag("connector_optin_${spec.id}")
                     )
                 } else {
-                    Text("ALWAYS ON", color = TextMuted, fontSize = 8.5.sp)
+                    Text(if (spec.kind == ConnectorKind.LOCAL) "ON IMPORT" else "ALWAYS ON", color = TextMuted, fontSize = 8.5.sp)
                 }
             }
         }

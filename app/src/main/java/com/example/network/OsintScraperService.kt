@@ -8,6 +8,7 @@ import com.example.connectors.ConnectorRunStatus
 import com.example.connectors.ConnectorToolkit
 import com.example.connectors.EvidenceAccumulator
 import com.example.connectors.RobotsTxt
+import com.example.connectors.Timestamps
 import com.example.engine.ChronoGeoEngine
 import com.example.engine.ConsentGate
 import com.example.engine.ForensicCommon
@@ -550,17 +551,8 @@ class OsintScraperService(
         return extracted
     }
 
-    private fun normalizeIsoTimestamp(raw: String, fallback: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.length >= 19 && trimmed[4] == '-' && trimmed[7] == '-') {
-            val base = trimmed.take(19).replace(' ', 'T')
-            return "${base}Z"
-        }
-        if (trimmed.length >= 10 && trimmed[4] == '-' && trimmed[7] == '-') {
-            return "${trimmed.take(10)}T12:00:00Z"
-        }
-        return fallback
-    }
+    /** A published timestamp in UTC, or [fallback] when there is none; see [Timestamps]. */
+    private fun normalizeIsoTimestamp(raw: String, fallback: String): String = Timestamps.isoToUtc(raw) ?: fallback
 
     private fun cleanHtmlEntities(input: String): String = input
         .replace("&amp;", "&")

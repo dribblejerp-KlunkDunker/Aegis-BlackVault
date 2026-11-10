@@ -199,6 +199,42 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   - the robots-then-page order with custody;
   - robots blocks, platform refusals with zero requests, and passive-only runs for a handle.
 
+## Phase 3b — feeds, manual import custody, honest timestamps
+- **`FeedConnector`** (active, opt-in) reads one RSS 2.0 or Atom feed.
+  - It turns each entry into a statement with a UTC date. HTML in feed bodies is reduced to plain
+    text.
+  - It reads `robots.txt` first and refuses the same platforms as the web-page connector, through
+    a shared `WebFetchPolicy`.
+  - Feed URLs (`.rss`, `.atom`, `.xml`, `/feed`, `/rss`, `/atom`) select it automatically, and a
+    new **RSS / ATOM** mode forces it.
+- **`ManualImportConnector`** (new kind **Local**, contacts nothing): every imported statement
+  records its source (file name or "pasted text"), when it was received, the SHA-256 of the exact
+  bytes imported, and a run id. The audit entry includes the run id and hash.
+- **No more invented times or hours.**
+  - **Undated statements:** a statement without a real timestamp now has no activity hour.
+    Previously it was given 14:00 and counted in the timezone and schedule estimates.
+  - **Dates without times:** these stay dates. Previously they became 12:00 UTC.
+  - **Timezone offsets:** a timestamp with an offset (`+02:00`) is converted to UTC. Previously the
+    local hour was mislabelled as UTC.
+  - **Imports and pages without a date:** eight import paths and the web-page connector no longer
+    stamp missing dates with the import or fetch time. Those statements stay undated, and the
+    fetch time lives in custody.
+  - **Re-scoring after import:** it no longer assumes 400 followers or counts unknown hours.
+- **No lookups of a handle guessed from another site's URL.** GitHub and Hugging Face now run only
+  for a bare handle or a URL on their own domain. Previously, a URL for any other site in "ALL" mode
+  made them look up a "handle" taken from that URL's path, which could attach an unrelated person's
+  account.
+- **Mode chips renamed** to fit five: ALL, GITHUB, HUGGING FACE, WEB PAGE, RSS / ATOM.
+- **Tests:** `FeedAndImportTest` (9 cases) covers:
+  - UTC conversion and date-only values;
+  - undated artifacts having no hour;
+  - RSS and Atom parsing;
+  - feed URL routing;
+  - opt-in and robots order for feeds;
+  - refusal of prohibited platforms;
+  - no handle lookups for another site's URL;
+  - custody on imports.
+
 ## Not changed yet (see roadmap)
 - Compose BOM 2024.09 and lifecycle 2.8.7 upgrades wait for CI (Phase 1).
 - `firebase-appcheck-debug` is still an `implementation` dependency; moving it needs a debug-only

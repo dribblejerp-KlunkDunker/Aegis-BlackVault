@@ -486,10 +486,11 @@ data class SpectrumBar(val index: Int, val token: String, val zScore: Float, val
 data class TelemetryLog(val ts: String, val category: String, val message: String)
 
 enum class ScraperPlatformMode(val label: String) {
-    ALL("ALL VECTORS"),
-    GITHUB("GITHUB API"),
+    ALL("ALL"),
+    GITHUB("GITHUB"),
     HUGGINGFACE("HUGGING FACE"),
-    DIRECT_URL("DIRECT URL / HTML")
+    DIRECT_URL("WEB PAGE"),
+    FEED("RSS / ATOM")
 }
 
 data class HttpEndpointProbe(

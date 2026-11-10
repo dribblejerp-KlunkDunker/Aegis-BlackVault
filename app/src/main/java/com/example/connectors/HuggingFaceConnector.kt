@@ -18,11 +18,13 @@ object HuggingFaceConnector : Connector {
         termsNote = "Hugging Face Hub terms; public model metadata only."
     )
 
-    override fun appliesTo(target: CollectionTarget): Boolean = target.handle.isNotBlank() && (
-        target.mode == ScraperPlatformMode.ALL ||
-            target.mode == ScraperPlatformMode.HUGGINGFACE ||
+    /** A bare handle in ALL or HUGGINGFACE mode, or a huggingface.co URL (see [GithubConnector.appliesTo]). */
+    override fun appliesTo(target: CollectionTarget): Boolean = target.handle.isNotBlank() &&
+        if (target.explicitUrl != null) {
             target.raw.contains("huggingface.co", ignoreCase = true)
-        )
+        } else {
+            target.mode == ScraperPlatformMode.ALL || target.mode == ScraperPlatformMode.HUGGINGFACE
+        }
 
     override suspend fun collect(
         target: CollectionTarget,

@@ -11,8 +11,10 @@ import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.connectors.CollectionTarget
 import com.example.connectors.ConnectorRegistry
 import com.example.connectors.ConnectorRunRecord
+import com.example.connectors.FeedConnector
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
 import com.example.engine.ExportEngine
@@ -287,6 +289,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 when {
                     uri.contains("github.com", ignoreCase = true) -> ScraperPlatformMode.ALL
                     uri.contains("huggingface.co", ignoreCase = true) -> ScraperPlatformMode.HUGGINGFACE
+                    FeedConnector.isFeedTarget(CollectionTarget(uri, "", uri, ScraperPlatformMode.ALL)) -> ScraperPlatformMode.FEED
                     else -> ScraperPlatformMode.DIRECT_URL
                 }
             }
@@ -726,7 +729,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     it.readText()
                 }.orEmpty()
                 if (rawText.isNotBlank()) {
-                    importRawPayloadText(rawText, useGeminiStructuredParser)
+                    importRawPayloadText(rawText, useGeminiStructuredParser, source = "file:${uri.lastPathSegment ?: "document"}")
                 }
             } catch (e: Exception) {
                 appendLog("IMPORT_ERR", "SAF file import failed: ${e.message}")
@@ -734,9 +737,12 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importRawPayloadText(rawPayload: String, useGeminiStructuredParser: Boolean = false) {
+    fun importRawPayloadText(rawPayload: String, useGeminiStructuredParser: Boolean = false, source: String = "pasted text") {
         val active = _uiState.value.activeSubject ?: return
         if (rawPayload.isBlank()) return
+        // Manual import is a connector too: every imported artifact records the source, the time it was
+        // received and the SHA-256 of the exact bytes imported.
+        val custody = MultiAiAndDataPortabilityService.ImportCustody.of(rawPayload, source)
 
         viewModelScope.launch {
             _uiState.update {
@@ -747,9 +753,9 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             }
             val importRes = withContext(Dispatchers.IO) {
                 if (useGeminiStructuredParser) {
-                    aiAndPortabilityService.importUnstructuredTextWithGemini(rawPayload, active)
+                    aiAndPortabilityService.importUnstructuredTextWithGemini(rawPayload, active, custody)
                 } else {
-                    aiAndPortabilityService.parseAndImportData(rawPayload, active)
+                    aiAndPortabilityService.parseAndImportData(rawPayload, active, custody)
                 }
             }
             val updated = importRes.updatedProfile
@@ -767,7 +773,9 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             repository.audit(
                 AuditAction.IMPORT,
                 updated.id,
-                "${importRes.formatDetected}: ${importRes.importedStatementsCount} statement(s) imported${if (useGeminiStructuredParser) " (parsed by Gemini)" else ""}"
+                "${importRes.formatDetected}: ${importRes.importedStatementsCount} statement(s) imported" +
+                    (if (useGeminiStructuredParser) " (parsed by Gemini)" else "") +
+                    "; run ${custody.runId}, sha256 ${custody.rawSha256.take(16)}"
             )
             refreshAuditChain()
         }

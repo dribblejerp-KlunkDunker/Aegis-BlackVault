@@ -33,12 +33,16 @@ object GithubConnector : Connector {
     private const val MAX_COMMITS = 12
     private const val MAX_ARTIFACTS_BEFORE_COMMENTS = 22
 
+    /**
+     * A bare handle in ALL or GITHUB mode, or a github.com URL. A URL for any other site never makes this
+     * connector look up a "handle" taken from that URL's path: that could pull in an unrelated account.
+     */
     override fun appliesTo(target: CollectionTarget): Boolean = target.handle.isNotBlank() &&
-        (
-            target.mode == ScraperPlatformMode.ALL ||
-                target.mode == ScraperPlatformMode.GITHUB ||
-                target.raw.contains("github.com", ignoreCase = true)
-            )
+        if (target.explicitUrl != null) {
+            target.raw.contains("github.com", ignoreCase = true)
+        } else {
+            target.mode == ScraperPlatformMode.ALL || target.mode == ScraperPlatformMode.GITHUB
+        }
 
     override suspend fun collect(
         target: CollectionTarget,

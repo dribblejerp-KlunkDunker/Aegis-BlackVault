@@ -58,6 +58,25 @@ object FakeGithubApi {
         <p>Pinning the consumer thread cut the p99 by a third.</p></article></body></html>
     """.trimIndent()
 
+    const val RSS_URL = "$SITE/feed.xml"
+    const val ATOM_URL = "$SITE/notes/atom.xml"
+
+    val rss = """
+        <?xml version="1.0"?><rss version="2.0"><channel><title>Notes</title>
+        <item><title>Ring buffers</title><link>$SITE/notes/ring-buffers</link>
+          <description>&lt;p&gt;Measuring tail latency needs a &lt;b&gt;quiet&lt;/b&gt; machine.&lt;/p&gt;</description>
+          <pubDate>Tue, 20 Oct 2026 08:30:00 +0200</pubDate></item>
+        <item><title>Undated thought</title><description>No date on this one.</description></item>
+        </channel></rss>
+    """.trimIndent()
+
+    val atom = """
+        <?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Notes</title>
+        <entry><title>Pinning threads</title><link href="$SITE/notes/pinning"/>
+          <published>2026-10-21T19:05:00-04:00</published><summary>Pinning the consumer cut the p99.</summary></entry>
+        </feed>
+    """.trimIndent()
+
     fun client(): OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(
             Interceptor { chain ->
@@ -69,6 +88,8 @@ object FakeGithubApi {
                     url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/repos" -> repos
                     url.host == "api.github.com" && url.encodedPath == "/users/$LOGIN/events/public" -> events
                     url.host == "pages.example" && url.encodedPath == "/robots.txt" -> robots
+                    url.host == "pages.example" && url.encodedPath == "/feed.xml" -> rss
+                    url.host == "pages.example" && url.encodedPath == "/notes/atom.xml" -> atom
                     url.host == "pages.example" && url.encodedPath.startsWith("/notes/") -> article
                     url.host == "pages.example" && url.encodedPath.startsWith("/private/") -> article
                     else -> null
