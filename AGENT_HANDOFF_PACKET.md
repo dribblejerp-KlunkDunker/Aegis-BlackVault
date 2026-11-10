@@ -35,4 +35,12 @@
 6. **Data Sufficiency Invariant (v3.6)**:
    - Scores below `DataSufficiency.MIN_WORDS_FOR_TRAITS` (300) are labeled insufficient; Burrows' Delta is withheld below `MIN_WORDS_FOR_STYLOMETRY` (1,500); activity windows need `MIN_TIMESTAMPS_FOR_CHRONO` (12) real timestamps. Every score is a heuristic estimate, not a validated psychometric instrument.
 
+7. **Connector Invariant (Phase 3)**:
+   - All collection goes through `com.example.connectors.ConnectorRegistry`. A new source is a new `Connector` with a `ConnectorSpec` (kind, opt-in, rate limit, endpoints, terms note); `ConnectorTest` checks the contract for every registered connector.
+   - `ACTIVE` connectors (anything that contacts the target's own site) require an explicit opt-in, read `robots.txt` first (RFC 9309; unreachable means disallow) and refuse `DirectUrlConnector.PROHIBITED_HOSTS`. There is no stealth mode: one honest User-Agent, no private APIs, no browser spoofing, no "auto-heal" for platforms that block collection.
+   - Every artifact carries the run id of the connector that produced it (`<run>-<connectorId>`); the audit entry for a collection lists each connector's outcome.
+   - Timestamps are never invented: undated statements keep an empty timestamp and `utcHour = -1` (`hasKnownHour == false`); fetch or import time belongs in custody fields only. Use `connectors.Timestamps` to normalise.
+   - Handle connectors (GitHub, Hugging Face) run only for a bare handle or a URL on their own domain.
+   - Never add a free-text people-lookup connector (username, email, phone or breach search on other people). The Phase 4 handle-reuse audit runs only on a handle proven to be the user's own.
+
 See `CHANGES.md` for the v3.6 audit fixes and the roadmap doc for Phases 1 to 6.

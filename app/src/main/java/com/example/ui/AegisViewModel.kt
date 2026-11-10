@@ -11,11 +11,13 @@ import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.connectors.CollectionTarget
+import com.example.connectors.ConnectorRegistry
+import com.example.connectors.ConnectorRunRecord
+import com.example.connectors.FeedConnector
 import com.example.data.AegisDatabase
 import com.example.data.AegisRepository
 import com.example.engine.ExportEngine
-import com.example.engine.ForensicCommon
-import com.example.engine.WalledGardenCatalog
 import com.example.model.*
 import com.example.network.MultiAiAndDataPortabilityService
 import com.example.network.OsintScraperService
@@ -27,7 +29,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,7 +50,10 @@ data class AegisUiState(
     val containmentOverride: Boolean = false,
     val selectedSpectrumToken: String = "to",
     val graphMode: String = "HIERARCHY",
-    val domDrift: DomDriftState = DomDriftState(),
+    /** ACTIVE connectors the user has switched on (persisted). Passive ones always run. */
+    val connectorOptIns: Set<String> = emptySet(),
+    /** The connector log of the most recent collection. */
+    val lastConnectorRuns: List<ConnectorRunRecord> = emptyList(),
     val cypherQuery: String = "MATCH (a:Identity)-[r]->(b) RETURN a.handle, type(r), b.name LIMIT 12",
     val cypherResultRows: List<List<String>> = emptyList(),
     val selectedAiProvider: AiProviderEngine = AiProviderEngine.GEMINI,
@@ -151,6 +155,9 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 activeProjectId = activeProjectId.value,
+                connectorOptIns = settings.getStringSet(KEY_CONNECTOR_OPT_INS, emptySet())
+                    .orEmpty()
+                    .filterTo(mutableSetOf()) { id -> ConnectorRegistry.byId(id)?.spec?.requiresOptIn == true },
                 appLockEnabled = AppLock.isEnabled(application),
                 appLockAvailable = AppLock.isAvailable(application)
             )
@@ -282,6 +289,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 when {
                     uri.contains("github.com", ignoreCase = true) -> ScraperPlatformMode.ALL
                     uri.contains("huggingface.co", ignoreCase = true) -> ScraperPlatformMode.HUGGINGFACE
+                    FeedConnector.isFeedTarget(CollectionTarget(uri, "", uri, ScraperPlatformMode.ALL)) -> ScraperPlatformMode.FEED
                     else -> ScraperPlatformMode.DIRECT_URL
                 }
             }
@@ -291,8 +299,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 scraperUri = uri,
-                selectedPlatformMode = autoMode,
-                domDrift = it.domDrift.copy(active = false, healing = false)
+                selectedPlatformMode = autoMode
             )
         }
     }
@@ -722,7 +729,7 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                     it.readText()
                 }.orEmpty()
                 if (rawText.isNotBlank()) {
-                    importRawPayloadText(rawText, useGeminiStructuredParser)
+                    importRawPayloadText(rawText, useGeminiStructuredParser, source = "file:${uri.lastPathSegment ?: "document"}")
                 }
             } catch (e: Exception) {
                 appendLog("IMPORT_ERR", "SAF file import failed: ${e.message}")
@@ -730,9 +737,12 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importRawPayloadText(rawPayload: String, useGeminiStructuredParser: Boolean = false) {
+    fun importRawPayloadText(rawPayload: String, useGeminiStructuredParser: Boolean = false, source: String = "pasted text") {
         val active = _uiState.value.activeSubject ?: return
         if (rawPayload.isBlank()) return
+        // Manual import is a connector too: every imported artifact records the source, the time it was
+        // received and the SHA-256 of the exact bytes imported.
+        val custody = MultiAiAndDataPortabilityService.ImportCustody.of(rawPayload, source)
 
         viewModelScope.launch {
             _uiState.update {
@@ -743,9 +753,9 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             }
             val importRes = withContext(Dispatchers.IO) {
                 if (useGeminiStructuredParser) {
-                    aiAndPortabilityService.importUnstructuredTextWithGemini(rawPayload, active)
+                    aiAndPortabilityService.importUnstructuredTextWithGemini(rawPayload, active, custody)
                 } else {
-                    aiAndPortabilityService.parseAndImportData(rawPayload, active)
+                    aiAndPortabilityService.parseAndImportData(rawPayload, active, custody)
                 }
             }
             val updated = importRes.updatedProfile
@@ -763,75 +773,64 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             repository.audit(
                 AuditAction.IMPORT,
                 updated.id,
-                "${importRes.formatDetected}: ${importRes.importedStatementsCount} statement(s) imported${if (useGeminiStructuredParser) " (parsed by Gemini)" else ""}"
+                "${importRes.formatDetected}: ${importRes.importedStatementsCount} statement(s) imported" +
+                    (if (useGeminiStructuredParser) " (parsed by Gemini)" else "") +
+                    "; run ${custody.runId}, sha256 ${custody.rawSha256.take(16)}"
             )
             refreshAuditChain()
         }
     }
 
     // ========================================================================
-    // OKHTTP SCRAPER & AI AUTO-HEAL PROTOCOL
+    // COLLECTION THROUGH CONNECTORS (roadmap Phase 3)
     // ========================================================================
 
-    fun forceDomMutationAlert() {
-        val target = _uiState.value.scraperUri.trim()
-        val spec = WalledGardenCatalog.detectWalledGarden(target) ?: WalledGardenSpec(
-            key = "custom_walled_garden",
-            name = target.substringAfter("://").substringBefore("/").ifBlank { "Walled-Garden Target" },
-            sampleUrl = target,
-            deprecatedSelector = "div.profile-root > main > article.post-card",
-            mutatedDom = "<div data-reactroot=\"\" class=\"_obf_991a2\"><!-- Shadow Hydration Root Mutated --></div>",
-            healedSelector = "hydration_ast://window.__NEXT_DATA__.props.pageProps.targetEntity",
-            strategy = "Headless Playwright AST Hydration Interceptor",
-            pythonSnippet = "async def extract_custom_healed(page):\n    state = await page.evaluate(\"() => window.__NEXT_DATA__.props.pageProps\")\n    return state[\"targetEntity\"]"
+    /** Switches an ACTIVE connector on or off. The change is remembered and written to the audit log. */
+    fun setConnectorOptIn(connectorId: String, enabled: Boolean) {
+        val connector = ConnectorRegistry.byId(connectorId) ?: return
+        if (!connector.spec.requiresOptIn) return
+        val updated = if (enabled) _uiState.value.connectorOptIns + connectorId else _uiState.value.connectorOptIns - connectorId
+        settings.edit { putStringSet(KEY_CONNECTOR_OPT_INS, updated) }
+        _uiState.update { it.copy(connectorOptIns = updated) }
+        appendLog("CONNECTOR", "${connector.spec.displayName.uppercase(Locale.US)} ${if (enabled) "ENABLED" else "DISABLED"}")
+        auditAsync(
+            AuditAction.SETTINGS_CHANGED,
+            null,
+            "Connector ${connector.spec.id} (${connector.spec.kind.name}) ${if (enabled) "opted in" else "opted out"}"
         )
-        _uiState.update {
-            it.copy(
-                isScraping = false,
-                bridgeStatus = "DOM_DRIFT // ${spec.name.uppercase(Locale.US)} HALTED",
-                domDrift = DomDriftState(
-                    active = true,
-                    platform = spec.name,
-                    platformKey = spec.key,
-                    deprecatedSelector = spec.deprecatedSelector,
-                    mutatedDom = spec.mutatedDom,
-                    proposedSelector = spec.healedSelector,
-                    strategy = spec.strategy,
-                    pythonSnippet = spec.pythonSnippet
-                )
-            )
-        }
-        appendLog("CRITICAL", "AST DRIFT ON [${spec.name.uppercase(Locale.US)}]: Selector \"${spec.deprecatedSelector}\" returned 0 nodes.")
     }
 
-    fun executeScrapeJob(forceHeal: Boolean = false, overrideUri: String? = null) {
+    fun executeScrapeJob(overrideUri: String? = null) {
         val target = (overrideUri ?: _uiState.value.scraperUri).trim()
-        if (target.isBlank()) return
+        if (target.isBlank() || _uiState.value.isScraping) return
         val mode = _uiState.value.selectedPlatformMode
-
-        val spec = WalledGardenCatalog.detectWalledGarden(target)
-        val existingPatch = if (spec != null) _uiState.value.astPatches[spec.key] else null
-
-        if (spec != null && !forceHeal && existingPatch == null && mode != ScraperPlatformMode.DIRECT_URL) {
-            forceDomMutationAlert()
-            return
-        }
+        val optIns = _uiState.value.connectorOptIns
+        // The project is fixed when the job starts, so switching projects mid-collection can't misfile it.
+        val projectId = activeProjectId.value
 
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isScraping = true,
-                    bridgeStatus = "OKHTTP SCRAPING [${mode.label}]..."
+                    bridgeStatus = "COLLECTING [${mode.label}]..."
                 )
             }
-            appendLog("OKHTTP", "DISPATCHING OKHTTP HARVESTER (${mode.label}) -> [$target]")
+            appendLog("CONNECTORS", "COLLECTING (${mode.label}) -> [$target]")
 
             val result = scraperService.scrapeAndBuildProfile(
                 rawTargetInput = target,
                 platformMode = mode,
-                healedPatchId = existingPatch?.patchId
+                optedInConnectors = optIns
             )
 
+            result.connectorRuns.forEach { run ->
+                appendLog(
+                    "CONNECTOR",
+                    "${run.displayName} [${run.kind.name}] -> ${run.status.label.uppercase(Locale.US)}" +
+                        " (${run.artifacts} artifact(s), ${run.requests} request(s))" +
+                        if (run.detail.isNotBlank()) ": ${run.detail}" else ""
+                )
+            }
             result.httpProbes.forEach { probe ->
                 appendLog(
                     "HTTP_${probe.httpStatusCode}",
@@ -840,11 +839,13 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val allCurrent = listOf(result.profile) + _uiState.value.linkableProfiles.filter { it.id != result.profile.id }
-            repository.saveProfile(result.profile, allCurrent, result.triplets, projectId = activeProjectId.value)
+            repository.saveProfile(result.profile, allCurrent, result.triplets, projectId = projectId)
             repository.audit(
                 AuditAction.SCRAPE,
                 result.profile.id,
-                "Collected via ${result.liveSourceUsed}: ${result.profile.scrapedArtifacts.size} artifacts, ${result.profile.corpusWordCount} words, ${result.httpProbes.size} requests"
+                "Collected via ${result.liveSourceUsed}: ${result.profile.scrapedArtifacts.size} artifacts, " +
+                    "${result.profile.corpusWordCount} words, ${result.httpProbes.size} requests; connectors: " +
+                    result.connectorRuns.joinToString { "${it.connectorId}=${it.status.name}" }.ifBlank { "none applied" }
             )
             refreshAuditChain()
 
@@ -852,86 +853,12 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     selectedSubjectId = result.profile.id,
                     httpProbes = (result.httpProbes + it.httpProbes).take(16),
+                    lastConnectorRuns = result.connectorRuns,
                     isScraping = false,
                     bridgeStatus = "ROOM TX OK // ${result.liveSourceUsed}"
                 )
             }
             appendLog("ROOM_TX", result.telemetrySummary)
-        }
-    }
-
-    fun initiateAiAutoHealProtocol() {
-        val drift = _uiState.value.domDrift
-        if (!drift.active || drift.healing) return
-        val currentUri = _uiState.value.scraperUri
-
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    domDrift = it.domDrift.copy(
-                        healing = true,
-                        healStep = 1,
-                        healProgress = 24,
-                        healStatusText = "STAGE 1/4: SNAPSHOTTING MUTATED ${drift.platform.uppercase(Locale.US)} DOM & SHADOW AST..."
-                    )
-                )
-            }
-            appendLog("AI_HEAL", "[1/4] Capturing obfuscated DOM tree on ${drift.platform}...")
-            delay(450)
-
-            _uiState.update {
-                it.copy(
-                    domDrift = it.domDrift.copy(
-                        healStep = 2,
-                        healProgress = 54,
-                        healStatusText = "STAGE 2/4: DIFFING BROKEN SELECTOR AGAINST HYDRATION PAYLOADS..."
-                    )
-                )
-            }
-            appendLog("AI_HEAL", "[2/4] Diffing failed selector \"${drift.deprecatedSelector}\"...")
-            delay(450)
-
-            _uiState.update {
-                it.copy(
-                    domDrift = it.domDrift.copy(
-                        healStep = 3,
-                        healProgress = 86,
-                        healStatusText = "STAGE 3/4: SYNTHESIZING NEW XPATH / JSON-HYDRATION ADAPTER..."
-                    )
-                )
-            }
-            appendLog("AI_HEAL", "[3/4] Synthesized new selector: ${drift.proposedSelector}")
-            delay(450)
-
-            val patchHash = ForensicCommon.sha256("${drift.platformKey}-${System.currentTimeMillis()}").take(6).uppercase(Locale.US)
-            val newPatch = AstPatchEntity(
-                platformKey = drift.platformKey,
-                patchId = "AST-PATCH-$patchHash",
-                platformName = drift.platform,
-                deprecatedSelector = drift.deprecatedSelector,
-                mutatedDom = drift.mutatedDom,
-                healedSelector = drift.proposedSelector,
-                strategy = drift.strategy,
-                pythonSnippet = drift.pythonSnippet,
-                confidence = "98.4%",
-                timestamp = nowStamp().take(8)
-            )
-            repository.saveAstPatch(newPatch)
-
-            _uiState.update {
-                it.copy(
-                    domDrift = it.domDrift.copy(
-                        active = false,
-                        healing = false,
-                        healStep = 4,
-                        healProgress = 100,
-                        healStatusText = "STAGE 4/4: HOT-PATCH COMPILED & INJECTED. RE-ENGAGING TARGET..."
-                    ),
-                    bridgeStatus = "AUTO_HEALED // ${newPatch.patchId}"
-                )
-            }
-            appendLog("AI_HEAL", "[4/4] Patch ${newPatch.patchId} deployed (Conf: 98.4%). Re-scraping $currentUri...")
-            executeScrapeJob(forceHeal = true, overrideUri = currentUri)
         }
     }
 
@@ -1060,5 +987,6 @@ class AegisViewModel(application: Application) : AndroidViewModel(application) {
         /** Pre-v6 global retention; migrated into the default project once. */
         const val KEY_RETENTION_DAYS = "retention_days"
         const val KEY_ACTIVE_PROJECT = "active_project_id"
+        const val KEY_CONNECTOR_OPT_INS = "connector_opt_ins"
     }
 }

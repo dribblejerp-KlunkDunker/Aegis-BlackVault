@@ -3,23 +3,16 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddComment
 import androidx.compose.material.icons.filled.AutoFixHigh
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,7 +22,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.engine.WalledGardenCatalog
+import com.example.connectors.ConnectorKind
+import com.example.connectors.ConnectorRegistry
+import com.example.connectors.ConnectorRunRecord
+import com.example.connectors.ConnectorRunStatus
 import com.example.model.*
 import com.example.ui.theme.*
 import java.util.Locale
@@ -44,32 +40,21 @@ fun ScraperBridgeScreen(
     linguisticProfileCount: Int = 0,
     mindMapHierarchyCount: Int = 0,
     isScraping: Boolean,
-    domDrift: DomDriftState,
-    astPatches: Map<String, AstPatchEntity>,
+    connectorOptIns: Set<String> = emptySet(),
+    lastConnectorRuns: List<ConnectorRunRecord> = emptyList(),
     telemetryLogs: List<TelemetryLog>,
     onUpdateScraperUri: (String) -> Unit,
     onSelectPlatformMode: (ScraperPlatformMode) -> Unit = {},
-    onExecuteScrape: (Boolean) -> Unit,
-    onForceDomMutation: () -> Unit,
-    onInitiateAutoHeal: () -> Unit,
+    onExecuteScrape: () -> Unit,
+    onSetConnectorOptIn: (String, Boolean) -> Unit = { _, _ -> },
     onHarvestEnhancements: () -> Unit,
     onAddCustomArtifact: (String, String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var showPatchCode by remember { mutableStateOf(false) }
     var showAddArtifactForm by remember { mutableStateOf(false) }
     var customText by remember { mutableStateOf("") }
     var customPlatform by remember { mutableStateOf("REDDIT_POST") }
     var customTimestamp by remember { mutableStateOf("2026-11-08T18:30:00Z") }
-
-    val currentSpec = remember(scraperUri) { WalledGardenCatalog.detectWalledGarden(scraperUri) }
-    val activePatch = remember(currentSpec, astPatches) {
-        if (currentSpec != null && astPatches.containsKey(currentSpec.key)) {
-            astPatches[currentSpec.key]
-        } else {
-            astPatches.values.firstOrNull()
-        }
-    }
 
     LazyColumn(
         modifier = modifier
@@ -94,26 +79,11 @@ fun ScraperBridgeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "OKHTTP OSINT SCRAPER & VIEWMODEL -> ROOM PIPELINE",
+                        text = "COLLECTION THROUGH DECLARED CONNECTORS -> ROOM",
                         color = PhosphorGreen,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Box(
-                        modifier = Modifier
-                            .testTag("force_dom_mutation_btn")
-                            .background(AlarmRed.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                            .border(1.dp, AlarmRed, RoundedCornerShape(4.dp))
-                            .clickable { onForceDomMutation() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "FORCE DOM MUTATION",
-                            color = AlarmRed,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
 
                 // OkHttp Vector Routing Mode Chips
@@ -155,76 +125,21 @@ fun ScraperBridgeScreen(
                     }
                 }
 
-                // Quick Target Presets: GitHub, Hugging Face, Direct URLs & Walled Gardens
-                Text(
-                    text = "QUICK-SELECT TARGETS (GITHUB, HUGGING FACE, DIRECT URLS, WALLED GARDENS):",
-                    color = TextSecondary,
-                    fontSize = 9.sp
+                // Connectors: what each source touches, and opt-in for the active ones.
+                ConnectorPanel(
+                    optIns = connectorOptIns,
+                    lastRuns = lastConnectorRuns,
+                    onSetOptIn = onSetConnectorOptIn
                 )
-
-                val quickTargets = listOf(
-                    Triple("GH: torvalds", "torvalds", null),
-                    Triple("GH: karpathy", "karpathy", null),
-                    Triple("HF: thomwolf", "https://huggingface.co/thomwolf", null),
-                    Triple("URL: github.com/torvalds", "https://github.com/torvalds", null),
-                    Triple("TikTok", WalledGardenCatalog.WALLED_GARDEN_CATALOG["tiktok"]!!.sampleUrl, "tiktok"),
-                    Triple("Instagram", WalledGardenCatalog.WALLED_GARDEN_CATALOG["instagram"]!!.sampleUrl, "instagram"),
-                    Triple("YouTube", WalledGardenCatalog.WALLED_GARDEN_CATALOG["youtube"]!!.sampleUrl, "youtube"),
-                    Triple("Reddit", WalledGardenCatalog.WALLED_GARDEN_CATALOG["reddit"]!!.sampleUrl, "reddit"),
-                    Triple("Facebook", WalledGardenCatalog.WALLED_GARDEN_CATALOG["facebook"]!!.sampleUrl, "facebook"),
-                    Triple("OnlyFans", WalledGardenCatalog.WALLED_GARDEN_CATALOG["onlyfans"]!!.sampleUrl, "onlyfans")
-                )
-
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(quickTargets) { (label, uri, wgKey) ->
-                        val isHealed = wgKey != null && astPatches.containsKey(wgKey)
-                        val isSelected = scraperUri.equals(uri, ignoreCase = true)
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    if (isSelected) AmberSignal.copy(alpha = 0.22f) else ObsidianBg,
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (isSelected) AmberSignal else PhosphorGreenDim,
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .clickable { onUpdateScraperUri(uri) }
-                                .padding(horizontal = 8.dp, vertical = 5.dp)
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (isSelected) AmberSignal else TextPrimary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                if (isHealed) {
-                                    Text(
-                                        text = "[HEALED]",
-                                        color = PhosphorGreen,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
 
                 // Target URI / Handle Input Field
                 OutlinedTextField(
                     value = scraperUri,
                     onValueChange = onUpdateScraperUri,
-                    enabled = !domDrift.healing,
                     singleLine = true,
                     label = {
                         Text(
-                            "Target URL (https://...) or Handle (@user / GitHub / Hugging Face)",
+                            "GitHub / Hugging Face handle, or a page URL (needs the web-page connector)",
                             fontSize = 10.sp
                         )
                     },
@@ -247,8 +162,8 @@ fun ScraperBridgeScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = { onExecuteScrape(false) },
-                        enabled = !isScraping && !domDrift.healing,
+                        onClick = onExecuteScrape,
+                        enabled = !isScraping,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = AmberSignal,
                             contentColor = ObsidianBg
@@ -264,7 +179,7 @@ fun ScraperBridgeScreen(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (isScraping) "SCRAPING..." else "SCRAPE -> ROOM DB",
+                            text = if (isScraping) "COLLECTING..." else "COLLECT -> ROOM DB",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -272,7 +187,7 @@ fun ScraperBridgeScreen(
 
                     Button(
                         onClick = onHarvestEnhancements,
-                        enabled = !isScraping && !domDrift.healing,
+                        enabled = !isScraping,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = VioletHf,
                             contentColor = Color.White
@@ -423,228 +338,6 @@ fun ScraperBridgeScreen(
                         color = TextSecondary,
                         fontSize = 9.sp
                     )
-                }
-            }
-        }
-
-        // 3. DOM Drift Alert & 4-Stage Visual AI Auto-Heal State Machine
-        if (domDrift.active) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(AlarmRed.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
-                        .border(1.5.dp, AlarmRed, RoundedCornerShape(6.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = "DOM Drift",
-                                tint = AlarmRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "DOM DRIFT DETECTED // ${domDrift.platform.uppercase(Locale.US)} SCHEMA MUTATED",
-                                color = AlarmRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Text(
-                            text = "AST_FAIL",
-                            color = AlarmRed,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(ObsidianBg, RoundedCornerShape(4.dp))
-                            .border(1.dp, AlarmRed.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "DEPRECATED SELECTOR (RETURNED 0 NODES):",
-                            color = AlarmRed,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = domDrift.deprecatedSelector,
-                            color = TextPrimary,
-                            fontSize = 10.sp
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "MUTATED DOM / HYDRATION SIGNATURE DETECTED:",
-                            color = AmberSignal,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = domDrift.mutatedDom,
-                            color = TextSecondary,
-                            fontSize = 10.sp
-                        )
-                    }
-
-                    if (domDrift.healing) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = domDrift.healStatusText,
-                                    color = AmberSignal,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "${domDrift.healProgress}%",
-                                    color = PhosphorGreen,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            LinearProgressIndicator(
-                                progress = { domDrift.healProgress / 100f },
-                                color = AmberSignal,
-                                trackColor = ObsidianBg,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                            )
-                        }
-                    } else {
-                        Button(
-                            onClick = onInitiateAutoHeal,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = PhosphorGreen,
-                                contentColor = ObsidianBg
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("initiate_auto_heal_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.BugReport,
-                                contentDescription = "Initiate Auto-Heal",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "INITIATE AI AUTO-HEAL PROTOCOL (SYNTHESIZE AST PATCH)",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Active Hot-Patched AST Architecture Card
-        if (!domDrift.active && activePatch != null) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(PhosphorGreen.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
-                        .border(1.dp, PhosphorGreen, RoundedCornerShape(6.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Healed",
-                                tint = PhosphorGreen,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "AI AUTO-HEAL PATCH ACTIVE // ${activePatch.patchId} (${activePatch.platformName})",
-                                color = PhosphorGreen,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .background(ObsidianBg, RoundedCornerShape(4.dp))
-                                .border(1.dp, PhosphorGreenDim, RoundedCornerShape(4.dp))
-                                .clickable { showPatchCode = !showPatchCode }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Code,
-                                    contentDescription = "Code",
-                                    tint = AmberSignal,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Text(
-                                    text = if (showPatchCode) "HIDE AI CODE" else "VIEW AI CODE",
-                                    color = AmberSignal,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "SYNTHESIZED SELECTOR: ${activePatch.healedSelector}",
-                        color = TextPrimary,
-                        fontSize = 10.sp
-                    )
-                    Text(
-                        text = "BYPASS STRATEGY: ${activePatch.strategy} (CONFIDENCE: ${activePatch.confidence})",
-                        color = AmberSignal,
-                        fontSize = 10.sp
-                    )
-
-                    if (showPatchCode) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(ObsidianBg, RoundedCornerShape(4.dp))
-                                .border(1.dp, PhosphorGreenDim, RoundedCornerShape(4.dp))
-                                .padding(8.dp)
-                                .horizontalScroll(rememberScrollState())
-                        ) {
-                            Text(
-                                text = activePatch.pythonSnippet,
-                                color = PhosphorGreen,
-                                fontSize = 10.sp,
-                                lineHeight = 14.sp
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -835,7 +528,8 @@ fun ScraperBridgeScreen(
                                 }
                             }
                             Text(
-                                text = "TONE: ${art.sentimentScore}/100 | UTC HR: ${String.format(Locale.US, "%02d:00", art.utcHour)}",
+                                text = "TONE: ${art.sentimentScore}/100 | UTC HR: " +
+                                    if (art.hasKnownHour) String.format(Locale.US, "%02d:00", art.utcHour) else "undated",
                                 color = CyanTelemetry,
                                 fontSize = 9.sp
                             )
@@ -910,5 +604,86 @@ private fun RoomCounterBadge(label: String, count: Int, color: Color, modifier: 
             fontSize = 8.sp,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+/**
+ * Lists every connector with what it touches. Passive ones always run; active ones (which contact the
+ * target's own site) stay off until switched on here. Shows the outcome of the last collection.
+ */
+@Composable
+private fun ConnectorPanel(
+    optIns: Set<String>,
+    lastRuns: List<ConnectorRunRecord>,
+    onSetOptIn: (String, Boolean) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ObsidianBg, RoundedCornerShape(4.dp))
+            .border(1.dp, PhosphorGreenDim, RoundedCornerShape(4.dp))
+            .padding(8.dp)
+            .testTag("connector_panel"),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text("CONNECTORS", color = CyanTelemetry, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        ConnectorRegistry.all.forEach { connector ->
+            val spec = connector.spec
+            val run = lastRuns.find { it.connectorId == spec.id }
+            Row(
+                modifier = Modifier.fillMaxWidth().testTag("connector_row_${spec.id}"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val kindColor = when (spec.kind) {
+                    ConnectorKind.ACTIVE -> AmberSignal
+                    ConnectorKind.PASSIVE -> PhosphorGreen
+                    ConnectorKind.LOCAL -> CyanTelemetry
+                }
+                Text(
+                    spec.kind.label.uppercase(Locale.US),
+                    color = kindColor,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .border(1.dp, kindColor, RoundedCornerShape(3.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(spec.displayName, color = TextPrimary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        spec.endpoints + if (spec.maxRequestsPerMinute > 0) " · ${spec.maxRequestsPerMinute} req/min" else "",
+                        color = TextSecondary,
+                        fontSize = 9.sp
+                    )
+                    if (spec.kind != ConnectorKind.PASSIVE) {
+                        Text(spec.termsNote, color = TextMuted, fontSize = 8.5.sp, lineHeight = 11.sp)
+                    }
+                    run?.let {
+                        val color = when (it.status) {
+                            ConnectorRunStatus.COLLECTED -> PhosphorGreen
+                            ConnectorRunStatus.NOTHING_FOUND, ConnectorRunStatus.SKIPPED_NOT_OPTED_IN -> TextSecondary
+                            else -> AlarmRed
+                        }
+                        Text(
+                            "Last run: ${it.status.label}" + if (it.detail.isNotBlank()) " · ${it.detail}" else "",
+                            color = color,
+                            fontSize = 9.sp,
+                            modifier = Modifier.testTag("connector_status_${spec.id}")
+                        )
+                    }
+                }
+                if (spec.requiresOptIn) {
+                    Switch(
+                        checked = spec.id in optIns,
+                        onCheckedChange = { onSetOptIn(spec.id, it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = AmberSignal.copy(alpha = 0.5f), checkedThumbColor = AmberSignal),
+                        modifier = Modifier.testTag("connector_optin_${spec.id}")
+                    )
+                } else {
+                    Text(if (spec.kind == ConnectorKind.LOCAL) "ON IMPORT" else "ALWAYS ON", color = TextMuted, fontSize = 8.5.sp)
+                }
+            }
+        }
     }
 }

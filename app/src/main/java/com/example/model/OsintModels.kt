@@ -483,39 +483,14 @@ data class MindMapEdge(val id: String, val sourceId: String, val targetId: Strin
 
 data class SpectrumBar(val index: Int, val token: String, val zScore: Float, val freqPct: Float, val barHeightPct: Int)
 
-data class WalledGardenSpec(
-    val key: String,
-    val name: String,
-    val sampleUrl: String,
-    val deprecatedSelector: String,
-    val mutatedDom: String,
-    val healedSelector: String,
-    val strategy: String,
-    val pythonSnippet: String
-)
-
-data class DomDriftState(
-    val active: Boolean = false,
-    val platform: String = "",
-    val platformKey: String = "",
-    val deprecatedSelector: String = "",
-    val mutatedDom: String = "",
-    val proposedSelector: String = "",
-    val strategy: String = "",
-    val pythonSnippet: String = "",
-    val healing: Boolean = false,
-    val healStep: Int = 0,
-    val healProgress: Int = 0,
-    val healStatusText: String = ""
-)
-
 data class TelemetryLog(val ts: String, val category: String, val message: String)
 
 enum class ScraperPlatformMode(val label: String) {
-    ALL("ALL VECTORS"),
-    GITHUB("GITHUB API"),
+    ALL("ALL"),
+    GITHUB("GITHUB"),
     HUGGINGFACE("HUGGING FACE"),
-    DIRECT_URL("DIRECT URL / HTML")
+    DIRECT_URL("WEB PAGE"),
+    FEED("RSS / ATOM")
 }
 
 data class HttpEndpointProbe(

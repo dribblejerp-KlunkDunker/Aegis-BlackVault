@@ -107,10 +107,12 @@ object StylometryEngine {
         verbatimText: String,
         contextLabel: String
     ): ScrapedArtifactItem {
+        // An artifact without a real timestamp has no activity hour (-1, see hasKnownHour); it never
+        // contributes an invented hour to the chronolocation histogram.
         val utcHour = if (timestampIso.length >= 13 && timestampIso[10] == 'T') {
-            timestampIso.substring(11, 13).toIntOrNull() ?: 14
+            timestampIso.substring(11, 13).toIntOrNull()?.takeIf { it in 0..23 } ?: -1
         } else {
-            14
+            -1
         }
         val words = Regex("[a-z0-9']+").findAll(verbatimText.lowercase(Locale.US)).map { it.value }.toSet()
         val markers = mutableListOf<String>()

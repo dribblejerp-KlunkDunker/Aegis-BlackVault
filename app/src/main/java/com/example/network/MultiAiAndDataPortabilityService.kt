@@ -2,6 +2,7 @@ package com.example.network
 
 import android.util.Log
 import com.example.BuildConfig
+import com.example.connectors.ManualImportConnector
 import com.example.engine.ChronoGeoEngine
 import com.example.engine.ExportEngine
 import com.example.engine.ForensicCommon
@@ -78,6 +79,27 @@ class MultiAiAndDataPortabilityService {
                 responseSchema = structuredImportSchema
             }
         )
+    }
+
+    /**
+     * Chain of custody for imported material (the "manual import" connector): where it came from, when it
+     * was received, the SHA-256 of the exact bytes imported and the run id. Applied to every new artifact.
+     */
+    data class ImportCustody(val runId: String, val source: String, val receivedAtMillis: Long, val rawSha256: String) {
+        fun stamp(art: ScrapedArtifactItem): ScrapedArtifactItem = art.copy(
+            sourceUrl = source,
+            fetchedAtMillis = receivedAtMillis,
+            httpStatus = 0,
+            rawResponseSha256 = rawSha256,
+            connectorRunId = runId
+        )
+
+        companion object {
+            fun of(rawPayload: String, source: String, nowMillis: Long = System.currentTimeMillis()): ImportCustody {
+                val sha = ForensicCommon.sha256(rawPayload)
+                return ImportCustody("run-$nowMillis-${sha.take(8)}-${ManualImportConnector.spec.id}", source, nowMillis, sha)
+            }
+        }
     }
 
     data class ImportedDossierResult(
@@ -592,7 +614,11 @@ class MultiAiAndDataPortabilityService {
      * (e.g., pasted Claude/Perplexity/Gemini outputs, interview transcripts, or OSINT notes) into
      * structured timestamped artifacts and merges them into the active SubjectProfile!
      */
-    suspend fun importUnstructuredTextWithGemini(rawText: String, activeSubject: SubjectProfile): ImportedDossierResult = withContext(Dispatchers.IO) {
+    suspend fun importUnstructuredTextWithGemini(
+        rawText: String,
+        activeSubject: SubjectProfile,
+        custody: ImportCustody? = null
+    ): ImportedDossierResult = withContext(Dispatchers.IO) {
         try {
             val response = withTimeout(60_000L) {
                 geminiStructuredImportModel.generateContent(
@@ -611,7 +637,7 @@ class MultiAiAndDataPortabilityService {
                         StylometryEngine.createTimestampedArtifact(
                             id = "art-gemini-imp-$i-${System.nanoTime()}",
                             platform = item.optString("platform", "GEMINI_IMPORT").uppercase(Locale.US),
-                            timestampIso = item.optString("timestampIso", currentIsoUtc()).ifBlank { currentIsoUtc() },
+                            timestampIso = item.optString("timestampIso", ""),
                             verbatimText = text,
                             contextLabel = "Gemini Structured Import"
                         )
@@ -619,7 +645,7 @@ class MultiAiAndDataPortabilityService {
                 }
             }
             if (extractedItems.isNotEmpty()) {
-                val mergedProfile = recomputeProfileWithNewArtifacts(activeSubject, extractedItems)
+                val mergedProfile = recomputeProfileWithNewArtifacts(activeSubject, extractedItems, custody)
                 return@withContext ImportedDossierResult(
                     updatedProfile = mergedProfile,
                     importedStatementsCount = extractedItems.size,
@@ -965,7 +991,7 @@ class MultiAiAndDataPortabilityService {
      * CSV, Claude XML, or raw timestamped lines), merges the extracted statements into the active
      * subject dossier, and recomputes the full Pennebaker LIWC + Burrows' Delta + Mind Map hierarchy.
      */
-    fun parseAndImportData(rawPayload: String, activeSubject: SubjectProfile): ImportedDossierResult {
+    fun parseAndImportData(rawPayload: String, activeSubject: SubjectProfile, custody: ImportCustody? = null): ImportedDossierResult {
         val trimmed = rawPayload.trim()
         if (trimmed.isBlank()) {
             return ImportedDossierResult(
@@ -996,7 +1022,7 @@ class MultiAiAndDataPortabilityService {
                                         StylometryEngine.createTimestampedArtifact(
                                             id = r.optString("entityId", "art-imp-json-$i-${System.nanoTime()}"),
                                             platform = r.optString("platform", "IMPORTED_JSON"),
-                                            timestampIso = r.optString("postedTimestampIso", currentIsoUtc()),
+                                            timestampIso = r.optString("postedTimestampIso", ""),
                                             verbatimText = text,
                                             contextLabel = r.optString("sourceUri", "Room JSON Import")
                                         )
@@ -1016,7 +1042,7 @@ class MultiAiAndDataPortabilityService {
                                         "x_verbatim_text",
                                         stixObj.optString("description", stixObj.optString("name", ""))
                                     ).trim()
-                                    val ts = stixObj.optString("first_observed", stixObj.optString("created", currentIsoUtc()))
+                                    val ts = stixObj.optString("first_observed", stixObj.optString("created", ""))
                                     val plat = stixObj.optString("x_platform", "STIX_${stixType.uppercase(Locale.US)}")
                                     if (text.isNotBlank()) {
                                         newArtifacts.add(
@@ -1040,7 +1066,7 @@ class MultiAiAndDataPortabilityService {
                                 StylometryEngine.createTimestampedArtifact(
                                     id = "art-json-single-${System.nanoTime()}",
                                     platform = obj.optString("platform", "JSON_IMPORT"),
-                                    timestampIso = obj.optString("timestamp", currentIsoUtc()),
+                                    timestampIso = obj.optString("timestamp", ""),
                                     verbatimText = text,
                                     contextLabel = "JSON Object Import"
                                 )
@@ -1062,7 +1088,7 @@ class MultiAiAndDataPortabilityService {
                             ).trim()
                             val ts = item.optString(
                                 "timestampIso",
-                                item.optString("postedTimestampIso", item.optString("created_at", currentIsoUtc()))
+                                item.optString("postedTimestampIso", item.optString("created_at", ""))
                             )
                             val plat = item.optString("platform", "JSON_ARRAY").uppercase(Locale.US)
                             if (text.isNotBlank()) {
@@ -1122,7 +1148,7 @@ class MultiAiAndDataPortabilityService {
                         if (cols.size >= 8) {
                             // Aegis 8-column CSV format: entity_id,subject_handle,platform,posted_timestamp_iso,utc_hour,sentiment_score,lexical_markers,verbatim_text
                             val plat = cols[2].ifBlank { "CSV_IMPORT" }
-                            val ts = cols[3].ifBlank { currentIsoUtc() }
+                            val ts = cols[3]
                             val text = cols[7].trim()
                             if (text.isNotBlank()) {
                                 newArtifacts.add(
@@ -1137,7 +1163,7 @@ class MultiAiAndDataPortabilityService {
                             }
                         } else if (cols.size >= 3) {
                             // 3-column CSV: timestamp,platform,text
-                            val ts = cols[0].ifBlank { currentIsoUtc() }
+                            val ts = cols[0]
                             val plat = cols[1].ifBlank { "CSV_IMPORT" }
                             val text = cols.subList(2, cols.size).joinToString(", ").trim()
                             if (text.isNotBlank()) {
@@ -1171,7 +1197,7 @@ class MultiAiAndDataPortabilityService {
                     StylometryEngine.createTimestampedArtifact(
                         id = "art-raw-$idx-${System.nanoTime()}",
                         platform = "IMPORTED_TRANSCRIPT",
-                        timestampIso = currentIsoUtc(),
+                        timestampIso = "", // plain text carries no dates; none is invented
                         verbatimText = para.take(360),
                         contextLabel = "Line #${idx + 1}"
                     )
@@ -1179,7 +1205,7 @@ class MultiAiAndDataPortabilityService {
             }
         }
 
-        val updatedProfile = recomputeProfileWithNewArtifacts(activeSubject, newArtifacts)
+        val updatedProfile = recomputeProfileWithNewArtifacts(activeSubject, newArtifacts, custody)
         return ImportedDossierResult(
             updatedProfile = updatedProfile,
             importedStatementsCount = newArtifacts.size,
@@ -1188,21 +1214,26 @@ class MultiAiAndDataPortabilityService {
         )
     }
 
-    private fun recomputeProfileWithNewArtifacts(activeSubject: SubjectProfile, newArtifacts: List<ScrapedArtifactItem>): SubjectProfile {
-        if (newArtifacts.isEmpty()) return activeSubject
+    private fun recomputeProfileWithNewArtifacts(
+        activeSubject: SubjectProfile,
+        imported: List<ScrapedArtifactItem>,
+        custody: ImportCustody?
+    ): SubjectProfile {
+        if (imported.isEmpty()) return activeSubject
+        val newArtifacts = if (custody != null) imported.map(custody::stamp) else imported
         val mergedArtifacts = (newArtifacts + activeSubject.scrapedArtifacts)
             .distinctBy { "${it.platform}:${it.verbatimText.take(80)}" }
             .sortedByDescending { it.timestampIso }
             .take(28)
 
         val combinedCorpus = mergedArtifacts.joinToString(" ") { it.verbatimText }
-        val hours = mergedArtifacts.map { it.utcHour }
+        val hours = mergedArtifacts.filter { it.hasKnownHour }.map { it.utcHour }
 
         val eval = StylometryEngine.evaluateCorpus(
             rawText = combinedCorpus,
             repoCount = activeSubject.githubRepos.size,
             hfCount = activeSubject.huggingFaceAssets.size,
-            followerCount = 400
+            followerCount = 0 // follower counts are not stored; none is assumed
         )
         val chrono = ChronoGeoEngine.evaluateChronoAndGeo(
             utcHours = hours,
