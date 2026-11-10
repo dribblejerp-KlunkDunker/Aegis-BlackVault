@@ -10,7 +10,6 @@ import com.example.engine.ForensicCommon
 import com.example.engine.MindMapEngine
 import com.example.engine.PlaybookEngine
 import com.example.engine.StylometryEngine
-import com.example.engine.WalledGardenCatalog
 import com.example.model.*
 import kotlinx.coroutines.flow.Flow
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -930,21 +929,5 @@ class AegisRepository(private val dao: AegisDao) {
         val allSeeds = listOf(subjAlpha, subjBeta)
         saveProfile(subjAlpha, allSeeds, seedTriplets)
         saveProfile(subjBeta, allSeeds, emptyList())
-
-        val tiktokSpec = WalledGardenCatalog.WALLED_GARDEN_CATALOG["tiktok"]!!
-        dao.upsertAstPatch(
-            AstPatchEntity(
-                platformKey = "tiktok",
-                patchId = "AST-PATCH-993AFX",
-                platformName = tiktokSpec.name,
-                deprecatedSelector = tiktokSpec.deprecatedSelector,
-                mutatedDom = tiktokSpec.mutatedDom,
-                healedSelector = tiktokSpec.healedSelector,
-                strategy = tiktokSpec.strategy,
-                pythonSnippet = tiktokSpec.pythonSnippet,
-                confidence = "98.4%",
-                timestamp = "20:47:01"
-            )
-        )
     }
 }
