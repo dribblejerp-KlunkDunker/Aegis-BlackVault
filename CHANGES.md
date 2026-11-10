@@ -225,7 +225,7 @@ Branch: `audit-fixes`. Roadmap: "Aegis BlackVault — Integration Roadmap" (Phas
   made them look up a "handle" taken from that URL's path, which could attach an unrelated person's
   account.
 - **Mode chips renamed** to fit five: ALL, GITHUB, HUGGING FACE, WEB PAGE, RSS / ATOM.
-- **Tests:** `FeedAndImportTest` (9 cases) covers:
+- **Tests:** `FeedAndImportTest` (8 cases) covers:
   - UTC conversion and date-only values;
   - undated artifacts having no hour;
   - RSS and Atom parsing;
