@@ -80,6 +80,7 @@ object FeedConnector : Connector {
         return when {
             added > 0 -> ConnectorRunStatus.COLLECTED to "$added entr${if (added == 1) "y" else "ies"}"
             resp.statusCode !in 200..299 -> ConnectorRunStatus.FAILED to "HTTP ${resp.statusCode}"
+            resp.body?.let(::declaresDtd) == true -> ConnectorRunStatus.FAILED to "refused: the feed declares a DTD or entities"
             else -> ConnectorRunStatus.NOTHING_FOUND to "not an RSS or Atom feed, or it has no entries"
         }
     }
@@ -88,9 +89,21 @@ object FeedConnector : Connector {
         val text: String get() = listOf(title, body).filter { it.isNotBlank() }.joinToString(": ")
     }
 
-    /** RSS `<item>` and Atom `<entry>` elements, in document order. */
+    /** Feeds never need a DTD; declaring one is how entity-expansion ("billion laughs") attacks work. */
+    private val DTD_DECLARATION = Regex("<!\\s*(DOCTYPE|ENTITY)", RegexOption.IGNORE_CASE)
+
+    /** True if [xml] declares a DOCTYPE or ENTITY; such feeds are refused without being parsed. */
+    fun declaresDtd(xml: String): Boolean = DTD_DECLARATION.containsMatchIn(xml)
+
+    /**
+     * RSS `<item>` and Atom `<entry>` elements, in document order. Untrusted input: any DOCTYPE or ENTITY
+     * declaration is refused before parsing, and DTD processing is switched off on the parser as well
+     * (Android's Xml.newPullParser() turns it on by default).
+     */
     fun parse(xml: String): List<FeedEntry> {
+        if (declaresDtd(xml)) return emptyList()
         val parser = Xml.newPullParser().apply {
+            setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
             setInput(StringReader(xml))
         }

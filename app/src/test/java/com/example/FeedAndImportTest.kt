@@ -72,6 +72,20 @@ class FeedAndImportTest {
     }
 
     @Test
+    fun `feeds that declare a DTD or entities are refused without parsing`() {
+        // A tiny nested-entity document; if parsed with DTD processing it would expand enormously.
+        val hostile = """
+            <?xml version="1.0"?>
+            <!DOCTYPE rss [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]>
+            <rss version="2.0"><channel><item><title>&c;</title><description>x</description></item></channel></rss>
+        """.trimIndent()
+        assertTrue(FeedConnector.declaresDtd(hostile))
+        assertTrue(FeedConnector.parse(hostile).isEmpty())
+        assertTrue(FeedConnector.parse(hostile.replace("<!DOCTYPE", "<! doctype")).isEmpty())
+        assertFalse(FeedConnector.declaresDtd(FakeGithubApi.rss))
+    }
+
+    @Test
     fun `feed URLs go to the feed connector and pages to the web-page connector`() {
         fun target(url: String, mode: ScraperPlatformMode = ScraperPlatformMode.ALL) = CollectionTarget(url, "", url, mode)
         assertTrue(FeedConnector.isFeedTarget(target(FakeGithubApi.RSS_URL)))
